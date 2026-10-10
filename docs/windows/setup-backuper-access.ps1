@@ -17,6 +17,10 @@
     .\setup-backuper-access.ps1 -Path 'D:\HS_ChoobShar\BackUp' -Name 'BackuperSQL$' -SqlBackups -OpenSqlPort
 
 .EXAMPLE
+  # Domain account (nothing is created, only rights are granted); existing share "Arpa" = C:\Arpa
+  .\setup-backuper-access.ps1 -Path 'C:\Arpa\Auto Backup' -Name 'Arpa' -User 'HARMONIC\BackuperBot' -SqlBackups -OpenSqlPort
+
+.EXAMPLE
   # File server 192.168.10.35 — archive (write) and two read-only folders
   .\setup-backuper-access.ps1 -Path 'E:\Backuper' -Name 'Backuper$'
   .\setup-backuper-access.ps1 -Path 'D:\Edari'    -Name 'Edari$'   -ReadOnly
@@ -79,7 +83,12 @@ $admins = (New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544').Tran
 $right = if ($ReadOnly) { 'Read' } else { 'Change' }
 $share = Get-SmbShare -Name $Name -ErrorAction SilentlyContinue
 if ($share) {
-    if ($share.Path.TrimEnd('\') -ne $Path.TrimEnd('\')) { throw "Share $Name already points to $($share.Path)" }
+    # An existing share may point to the folder itself or to one of its parents (e.g. share "Arpa" = C:\Arpa
+    # and -Path C:\Arpa\Auto Backup): grant access on the share, folder rights only on -Path.
+    $sharePath = $share.Path.TrimEnd('\') + '\'
+    if (-not ($Path.TrimEnd('\') + '\').StartsWith($sharePath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Share $Name points to $($share.Path), which doesn't contain $Path"
+    }
     Grant-SmbShareAccess -Name $Name -AccountName $account -AccessRight $right -Force | Out-Null
 } else {
     $p = @{ Name = $Name; Path = $Path; FullAccess = $admins; Description = 'Backuper bot' }
@@ -115,4 +124,5 @@ $ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Select-Object -ExpandProperty IPAddress
 Write-Host ''
 Write-Host "Done. $account has $(if ($ReadOnly) {'READ'} else {'MODIFY'}) access to $Path via:" -ForegroundColor Green
-foreach ($ip in $ips) { Write-Host "    \\$ip\$Name" }
+$sub = if ($share) { $Path.Substring($share.Path.TrimEnd('\').Length) } else { '' }
+foreach ($ip in $ips) { Write-Host "    \\$ip\$Name$sub" }
