@@ -1,0 +1,21 @@
+[Unit]
+Description=Backuper - backup collector with Telegram admin panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@DIR@
+ExecStart=@DIR@/.venv/bin/backuper --env @DIR@/.env serve
+Restart=always
+RestartSec=15
+# Big zips: allow plenty of time to finish an upload chunk on stop
+TimeoutStopSec=60
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

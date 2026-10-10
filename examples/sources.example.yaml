@@ -1,0 +1,64 @@
+# Example for `backuper import <file>`. Re-importing updates sources by name.
+# Passwords may be left empty here and set later in the bot (🔑 Credentials).
+
+settings:
+  schedule: "03:00"                         # or "03:00, 15:00" or cron "0 3 * * *"
+  archive_path: '\\10.0.0.5\Backups'        # or a local folder like /srv/backups
+  archive_credential: fileserver
+  archive_keep_days: 14
+  topic_mode: category                      # category | source | none
+
+credentials:
+  - name: fileserver
+    username: 'CORP\svc-backup'
+    password: ''
+  - name: sql-backup
+    username: backuper
+    password: ''
+  - name: mikrotik-bot
+    username: backuper
+    password: ''
+  - name: cpanel-example
+    username: examplecom                 # cPanel username; password = API token
+    password: ''
+  - name: ftp-example
+    username: examplecom
+    password: ''
+
+sources:
+  - name: ERP
+    type: mssql_collect
+    share: '\\10.0.0.10\SQLBackup'
+    credential: fileserver
+    patterns: ['*.bak']
+    group_by: database
+    keep_last: 14
+
+  - name: Accounting
+    type: mssql_trigger
+    host: 10.0.0.11
+    sql_credential: sql-backup
+    databases: ['*']
+    server_dir: 'D:\SQLBackup'
+    share: '\\10.0.0.11\SQLBackup'
+    share_credential: fileserver
+    keep_last: 7
+
+  - name: Core-Router
+    type: mikrotik
+    host: 10.0.0.1
+    credential: mikrotik-bot
+
+  - name: Finance-Docs
+    type: smb_folder
+    path: '\\10.0.0.5\D$\Finance'
+    credential: fileserver
+
+  - name: Website
+    type: cpanel
+    host: example.com
+    credential: cpanel-example           # username + API token
+    auth: token
+    transfer: ftps
+    transfer_credential: ftp-example     # cPanel FTP login
+    schedule: "0 4 * * 5"                # own schedule: Fridays 04:00
