@@ -61,3 +61,18 @@ def test_split_parts_concatenate_to_original(tmp_path):
     assert joined == payload
     assert part_ranges(10, 300) == [(0, 10)]
     assert part_name("a.zip", 1, 1) == "a.zip"
+
+
+def test_incompressible_big_files_are_stored_not_deflated(tmp_path):
+    rnd = os.urandom(20 * 1024 * 1024)            # e.g. a .bak made WITH COMPRESSION
+    zeros = b"\0" * (20 * 1024 * 1024)            # e.g. a normal .bak
+    art = Artifact(label="", entries=[_entry("compressed.bak", rnd), _entry("plain.bak", zeros)])
+    out = tmp_path / "a.zip"
+    build_zip(art, out, password="pw")
+    with pyzipper.AESZipFile(out) as z:
+        z.setpassword(b"pw")
+        info = {i.filename: i for i in z.infolist()}
+        assert z.read("compressed.bak") == rnd and z.read("plain.bak") == zeros
+    # AES members record the real method in the extra field; compare stored sizes instead
+    assert info["compressed.bak"].compress_size >= len(rnd)
+    assert info["plain.bak"].compress_size < len(zeros) // 100

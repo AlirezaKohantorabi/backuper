@@ -7,6 +7,7 @@ import logging
 import os
 import time
 import zipfile
+import zlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO
@@ -19,6 +20,9 @@ log = logging.getLogger(__name__)
 
 CHUNK = 4 * 1024 * 1024
 _ZIP64_THRESHOLD = 1 << 30  # be generous: sizes of live files can change while reading
+_AUTO_STORE_MIN = 16 * 1024 * 1024  # only bother sampling big files
+_SAMPLE_SKIP = 1024 * 1024          # skip the (compressible) file header when sampling
+_SAMPLE = 2 * 1024 * 1024
 
 
 class PackagingError(RuntimeError):
@@ -94,6 +98,17 @@ def write_zip(
 
             zi = info_cls(entry.arcname.replace("\\", "/"), date_time=_zip_datetime(entry.mtime))
             stored = not entry.compress or level == 0
+            first = b""
+            try:
+                if not stored and entry.size >= _AUTO_STORE_MIN:
+                    # Already-compressed data (e.g. SQL backups made WITH COMPRESSION) doesn't shrink;
+                    # deflating it only burns CPU (~30 MB/s). Test a sample and store it as-is instead.
+                    first = stream.read(CHUNK)
+                    sample = first[_SAMPLE_SKIP:_SAMPLE_SKIP + _SAMPLE] or first[:_SAMPLE]
+                    stored = bool(sample) and len(zlib.compress(sample, 1)) > 0.9 * len(sample)
+            except OSError as e:
+                stream.close()
+                raise PackagingError(f"read error in {entry.arcname}: {e}") from e
             zi.compress_type = zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED
             if not stored:
                 zi._compresslevel = level  # noqa: SLF001 - honoured by zipfile and pyzipper
@@ -101,6 +116,9 @@ def write_zip(
             zi.external_attr = 0o644 << 16
             try:
                 with stream, zf.open(zi, "w", force_zip64=entry.size >= _ZIP64_THRESHOLD) as dst:
+                    if first:
+                        dst.write(first)
+                        written += len(first)
                     while True:
                         buf = stream.read(CHUNK)
                         if not buf:

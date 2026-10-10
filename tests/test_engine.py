@@ -186,3 +186,78 @@ async def test_same_minute_rerun_never_deletes_the_current_copy(cfg, store, tmp_
     for _ in range(3):
         await engine.run(trigger="test")
     assert len(list((tmp_path / "arch").rglob("Edari_*.zip"))) == 1
+
+
+async def test_collect_skips_backup_that_was_already_stored(cfg, store, tmp_path, monkeypatch):
+    """A share whose newest .bak didn't change since the last run must not be re-sent."""
+    import time as _t
+
+    from backuper.models import SKIPPED
+    from backuper.sources import mssql_collect
+    from backuper.transport.smb import RemoteFile
+
+    data = os.urandom(2000)
+    newest = RemoteFile(path=r"\\h\s\HS_X_14050718_090112.bak", rel="HS_X_14050718_090112.bak",
+                        size=len(data), mtime=_t.time() - 3600)
+
+    class FakeSMB:
+        def opener(self, path):
+            return lambda: io.BytesIO(data)
+
+    async def fake_groups(self):
+        return FakeSMB(), {"HS_X_*.bak": [newest]}
+
+    async def passthrough(smb, f, ctx, max_wait_s=0):
+        return f
+
+    monkeypatch.setattr(mssql_collect.MSSQLCollect, "_groups", fake_groups)
+    monkeypatch.setattr(mssql_collect, "wait_until_stable", passthrough)
+    store.set_setting("archive_path", str(tmp_path / "arch"))
+    store.save_credential("c", "u", "p")
+    store.create_source("Hamrahan", "mssql_collect", {"share": r"\\h\s", "credential": "c",
+                                                      "patterns": ["HS_X_*.bak"], "max_age_hours": 26}, set())
+    sender = FakeSender()
+    engine = Engine(cfg, store, sender)
+
+    first = store.run_items(await engine.run(trigger="test"))[0]
+    assert first["status"] == OK and len(sender.uploads) == 1
+    assert sender.uploads[0][0].startswith("Hamrahan_HS_X_")
+
+    second = store.run_items(await engine.run(trigger="test"))[0]
+    assert second["status"] == SKIPPED and "no new backup" in second["message"]
+    assert len(sender.uploads) == 1  # nothing re-uploaded
+
+    newest.mtime = _t.time() - 1800  # a new backup appears
+    third = store.run_items(await engine.run(trigger="test"))[0]
+    assert third["status"] == OK and len(sender.uploads) == 2
+
+
+async def test_collect_retries_upload_next_run_if_telegram_failed(cfg, store, tmp_path, monkeypatch):
+    import time as _t
+
+    from backuper.sources import mssql_collect
+    from backuper.transport.smb import RemoteFile
+
+    newest = RemoteFile(path=r"\\h\s\X_1.bak", rel="X_1.bak", size=10, mtime=_t.time() - 60)
+
+    class FakeSMB:
+        def opener(self, path):
+            return lambda: io.BytesIO(b"0123456789")
+
+    async def fake_groups(self):
+        return FakeSMB(), {"X_*.bak": [newest]}
+
+    async def passthrough(smb, f, ctx, max_wait_s=0):
+        return f
+
+    monkeypatch.setattr(mssql_collect.MSSQLCollect, "_groups", fake_groups)
+    monkeypatch.setattr(mssql_collect, "wait_until_stable", passthrough)
+    store.set_setting("archive_path", str(tmp_path / "arch"))
+    store.save_credential("c", "u", "p")
+    store.create_source("S", "mssql_collect", {"share": r"\\h\s", "credential": "c", "patterns": ["X_*.bak"]}, set())
+    sender = FakeSender(fail={"S_"})
+    engine = Engine(cfg, store, sender)
+    assert store.run_items(await engine.run(trigger="t"))[0]["status"] == PARTIAL   # archived, Telegram down
+    sender.fail.clear()
+    assert store.run_items(await engine.run(trigger="t"))[0]["status"] == OK        # re-sent automatically
+    assert len(sender.uploads) == 1

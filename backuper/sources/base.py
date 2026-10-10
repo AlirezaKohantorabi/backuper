@@ -58,6 +58,7 @@ class RunContext:
         self.now = now
         self.log = log or logging.getLogger(f"backuper.source.{source.name}")
         self.warnings: list[str] = []
+        self.notes: list[str] = []  # informational, e.g. "no new backup since …" (not a warning)
         workdir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -79,6 +80,10 @@ class RunContext:
     def warn(self, msg: str) -> None:
         self.log.warning(msg)
         self.warnings.append(msg)
+
+    def note(self, msg: str) -> None:
+        self.log.info(msg)
+        self.notes.append(msg)
 
     def get_state(self, key: str, default: Any = None) -> Any:
         return self.source.state.get(key, default)

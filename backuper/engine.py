@@ -26,7 +26,7 @@ from backuper.db import Store
 from backuper.destinations.archive import Archive
 from backuper.destinations.telegram import TelegramSender, esc
 from backuper.models import (
-    FAILED, OK, PARTIAL, STATUS_ICON, WARNING, Artifact, ItemResult, PackagedFile, SourceRecord,
+    FAILED, OK, PARTIAL, SKIPPED, STATUS_ICON, WARNING, Artifact, ItemResult, PackagedFile, SourceRecord,
 )
 from backuper.packager import build_zip, write_zip
 from backuper.settings import FOLDER_FORMATS
@@ -222,6 +222,11 @@ class Engine:
                     for p in art.cleanup:  # raw downloads are no longer needed once zipped
                         Path(p).unlink(missing_ok=True)
                 sp.phase = "ready"
+                if not artifacts and ctx.notes:
+                    res.status, res.message = SKIPPED, "; ".join(ctx.notes)
+                    sp.phase = "nothing new"
+                else:
+                    res.warnings.extend(f"skipped: {n}" for n in ctx.notes)
             except SourceError as e:
                 res.status, res.message = FAILED, str(e)
                 sp.phase = "failed"
@@ -343,7 +348,7 @@ class Engine:
 
     # -- phase 3 ----------------------------------------------------------------------------
     async def _finish_source(self, res: ItemResult, pend: _Pending | None) -> None:
-        if res.status == FAILED:
+        if res.status in (FAILED, SKIPPED):
             return
         if not res.files:
             res.status, res.message = WARNING, "nothing to back up"
@@ -362,6 +367,8 @@ class Engine:
 
         # Source-side retention only for artifacts that are safely stored somewhere.
         if pend is not None:
+            for a, pf in pend.stored:  # fully delivered = everywhere it should go (lets sources skip it next time)
+                a.meta["delivered"] = bool((pf.archive_rel or not archive_on) and (pf.uploaded or not pf.send_telegram))
             safe = [a for a, pf in pend.stored if pf.archive_rel or (not self.archive.enabled and pf.uploaded)]
             if safe:
                 try:
@@ -369,7 +376,7 @@ class Engine:
                 except Exception as e:  # noqa: BLE001
                     log.exception("retention for %s failed", res.source_name)
                     res.warnings.append(f"retention failed: {short_error(e)}")
-        if res.status == OK and any(not w.startswith(("retention:", "deleted ")) for w in res.warnings):
+        if res.status == OK and any(not w.startswith(("retention:", "deleted ", "skipped:")) for w in res.warnings):
             res.status = WARNING
 
     async def _prune_source_archive(self, pend: _Pending, res: ItemResult) -> None:
@@ -414,7 +421,7 @@ class Engine:
     # -- reporting ---------------------------------------------------------------------------
     def _report(self, run_id: int, trigger: str, now: jdatetime.datetime, results: list[ItemResult],
                 duration: float, extra: str) -> tuple[str, str]:
-        counts = {s: sum(1 for r in results if r.status == s) for s in (OK, WARNING, PARTIAL, FAILED)}
+        counts = {s: sum(1 for r in results if r.status == s) for s in (OK, SKIPPED, WARNING, PARTIAL, FAILED)}
         if not results:
             status = OK
         elif counts[FAILED] == len(results):
@@ -430,7 +437,7 @@ class Engine:
                 + " · ".join(f"{STATUS_ICON[s]} {n}" for s, n in counts.items() if n)
                 + f" · {human_size(total)} · {human_duration(duration)}")
         lines = [head, ""]
-        for r in sorted(results, key=lambda r: (r.status == OK, r.source_name.lower())):
+        for r in sorted(results, key=lambda r: (r.status in (OK, SKIPPED), r.source_name.lower())):
             line = f"{STATUS_ICON[r.status]} <b>{esc(r.source_name)}</b>"
             if r.files:
                 line += " — " + ", ".join(

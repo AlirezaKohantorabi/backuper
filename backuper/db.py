@@ -224,11 +224,15 @@ class Store:
         )
 
     def update_source(self, source_id: int, *, name: str | None = None, config: dict[str, Any] | None = None,
-                      secret_keys: Iterable[str] = (), enabled: bool | None = None) -> None:
+                      secret_keys: Iterable[str] = (), enabled: bool | None = None,
+                      type_id: str | None = None) -> None:
         sets, params = ["updated_at=?"], [_now()]
         if name is not None:
             sets.append("name=?")
             params.append(name)
+        if type_id is not None:
+            sets.append("type=?")
+            params.append(type_id)
         if config is not None:
             sets.append("config=?")
             params.append(json.dumps(self._encrypt_config(config, secret_keys), ensure_ascii=False))

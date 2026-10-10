@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from backuper.fields import BOOL, CHOICE, CREDENTIAL, INT, LIST, UNC, Field
 from backuper.models import Artifact, Entry
 from backuper.sources.base import SourceError, SourceType
 from backuper.sources.mssql_common import (
-    GROUP_MODES, apply_retention, check_fresh, group_files, label_for, wait_until_stable,
+    GROUP_MODES, apply_retention, check_fresh, group_files, label_for, signature, wait_until_stable,
 )
 from backuper.util import human_size
 
@@ -66,19 +67,30 @@ class MSSQLCollect(SourceType):
         if not groups:
             raise SourceError(f"no files matching {self.cfg.get('patterns')} in {self.cfg['share']}")
         artifacts = []
+        already = self.ctx.get_state("last_sent", {})
         for key, files in groups.items():
             newest = files[0]
+            label = label_for(key, newest)
             check_fresh(newest, int(self.cfg.get("max_age_hours") or 0))
+            if already.get(key) == signature(newest):
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(newest.mtime))
+                self.ctx.note(f"{label}: no new backup since {when} (already stored)")
+                continue
             newest = await wait_until_stable(smb, newest, self.ctx)
             artifacts.append(Artifact(
-                label=label_for(key, newest),
+                label=label,
                 entries=[Entry(arcname=newest.name, size=newest.size, mtime=newest.mtime,
                                opener=smb.opener(newest.path))],
-                meta={"group": key},
+                meta={"group": key, "sig": signature(newest)},
             ))
         return artifacts
 
     async def after_success(self, artifacts: list[Artifact]) -> list[str]:
+        # Remember what was fully delivered so an unchanged file isn't sent again next run
+        # (if Telegram failed, it's retried automatically next run).
+        sent = dict(self.ctx.get_state("last_sent", {}))
+        sent.update({a.meta["group"]: a.meta["sig"] for a in artifacts if a.meta.get("sig") and a.meta.get("delivered")})
+        self.ctx.set_state("last_sent", sent)
         keep = int(self.cfg.get("keep_last") or 0)
         if keep <= 0:
             return []

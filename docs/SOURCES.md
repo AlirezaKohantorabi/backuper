@@ -34,6 +34,11 @@ newest file per database from the share.
 - **Max age**: if the newest file is older than this (default 26 h), the run reports a failure —
   the job on the server is probably broken.
 - A file that's still being written is waited for (up to 1 h).
+- A file that was already delivered isn't sent again: the run shows ⏭ *no new backup since …*
+  (e.g. applications that only back up on working days). If its Telegram upload failed, it's
+  retried automatically on the next run.
+- Files that don't compress (SQL backups made `WITH COMPRESSION`, `.zip`, media…) are stored in
+  the zip as-is — encrypted, but not re-compressed, which saves a lot of CPU time.
 
 ## SQL Server — run BACKUP + collect (`mssql_trigger`)
 

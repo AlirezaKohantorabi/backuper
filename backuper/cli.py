@@ -197,7 +197,8 @@ def cmd_import(args) -> int:
                 continue
             enabled = bool(s.get("enabled", True))
             if existing:
-                store.update_source(existing.id, config=values, secret_keys=cls.secret_keys(), enabled=enabled)
+                store.update_source(existing.id, config=values, secret_keys=cls.secret_keys(), enabled=enabled,
+                                    type_id=type_id)
             else:
                 store.create_source(name, type_id, values, cls.secret_keys(), enabled=enabled)
         except Exception as e:  # noqa: BLE001

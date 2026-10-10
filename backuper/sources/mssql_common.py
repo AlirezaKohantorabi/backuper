@@ -65,9 +65,17 @@ def group_files(files: list[RemoteFile], patterns: list[str], group_by: str = "p
 
 
 def label_for(group_key: str, newest: RemoteFile) -> str:
-    if any(ch in group_key for ch in "*?["):
-        return infer_db_name(newest.name) or newest.name.rsplit(".", 1)[0]
-    return group_key
+    """Readable item name for a group: 'Holoo1_*.zip' -> Holoo1, 'ArpaEn/*.bak' -> ArpaEn."""
+    if not any(ch in group_key for ch in "*?["):
+        return group_key
+    if "/" in group_key and not any(ch in group_key.split("/")[0] for ch in "*?["):
+        return group_key.split("/")[0]
+    prefix = re.split(r"[*?\[]", group_key, maxsplit=1)[0].strip("_-. ")
+    return prefix or infer_db_name(newest.name) or newest.name.rsplit(".", 1)[0]
+
+
+def signature(f: RemoteFile) -> str:
+    return f"{f.name}|{f.size}|{int(f.mtime)}"
 
 
 def check_fresh(f: RemoteFile, max_age_hours: int) -> None:

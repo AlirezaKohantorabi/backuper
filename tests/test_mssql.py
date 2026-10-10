@@ -46,3 +46,18 @@ def test_group_by_folder_and_path_patterns():
     assert set(groups) == {"Arpa", "ArpaEn"} and groups["Arpa"][0].name == "b.bak"
     only_en = group_files(files, ["ArpaEn/*.bak"], "pattern")
     assert [f.name for f in only_en["ArpaEn/*.bak"]] == ["c.bak"]
+
+
+def test_labels_from_patterns():
+    f = _f("Holoo1_050717_20-29-40_S12087389_HC-15.zip", 1)
+    assert label_for("Holoo1_*.zip", f) == "Holoo1"
+    assert label_for("HS_ChoobShar_*.bak", _f("HS_ChoobShar_14050718_090112.bak", 1)) == "HS_ChoobShar"
+    assert label_for("ArpaEn/*.bak", _f("x.bak", 1)) == "ArpaEn"
+    assert label_for("*.bak", _f("Sales_backup_2026_10_06_010000_1.bak", 1)) == "Sales"
+
+
+def test_holoo_real_naming_with_patterns():
+    files = [_f("Holoo1_050717_20-29-40_S12087389_HC-15.zip", 10), _f("Holoo1_050716_20-30-00_S12087389_HC-15.zip", 34),
+             _f("Holoo2_050717_20-29-40_S12087389_HC-15.zip", 10), _f("AutoHoloo1_x.zip", 1)]
+    groups = group_files(files, ["Holoo1_*.zip", "Holoo2_*.zip"], "pattern")
+    assert {k: len(v) for k, v in groups.items()} == {"Holoo1_*.zip": 2, "Holoo2_*.zip": 1}  # AutoHoloo untouched
