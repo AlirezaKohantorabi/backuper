@@ -25,14 +25,40 @@ def test_form_skips_hidden_fields():
     assert "Verify TLS" in text and len(buttons) >= 2
 
 
-def test_scheduler_plan_groups_by_cron(cfg, store):
-    store.set_setting("schedule", "0 3 * * *")
-    a = store.create_source("A", "smb_folder", {"path": r"\\h\s", "credential": "c"}, set())
-    b = store.create_source("B", "smb_folder", {"path": r"\\h\s", "credential": "c", "schedule": "0 4 * * 5"}, set())
-    c = store.create_source("C", "smb_folder", {"path": r"\\h\s", "credential": "c"}, set(), enabled=False)
+def test_scheduler_plan_groups_and_own_times(cfg, store):
+    store.save_group("Daily", "0 8 * * *")
+    store.save_group("Paused", "0 9 * * *", enabled=False)
+    a = store.create_source("A", "smb_folder", {"path": r"\\h\s", "credential": "c", "group": "Daily"}, set())
+    a2 = store.create_source("A2", "smb_folder", {"path": r"\\h\s", "credential": "c", "group": "daily"}, set())
+    b = store.create_source("B", "smb_folder", {"path": r"\\h\s", "credential": "c", "schedule": "0 19 * * *"}, set())
+    store.create_source("C", "smb_folder", {"path": r"\\h\s", "credential": "c", "group": "Daily"}, set(),
+                        enabled=False)
+    store.create_source("D", "smb_folder", {"path": r"\\h\s", "credential": "c"}, set())          # manual only
+    store.create_source("E", "smb_folder", {"path": r"\\h\s", "credential": "c", "group": "Paused",
+                                            "schedule": "0 5 * * *"}, set())  # disabled group: not scheduled
     sched = Scheduler(Engine(cfg, store, None), store, cfg.timezone)
-    plan = sched._plan()
-    assert plan == {"0 3 * * *": [a], "0 4 * * 5": [b]}
-    assert c not in sum(plan.values(), [])
+    plan = {j.label: j for j in sched.plan().values()}
+    assert set(plan) == {"group Daily", "B"}
+    assert sorted(plan["group Daily"].source_ids) == sorted([a, a2])
+    assert plan["B"].source_ids == [b] and plan["B"].cron == "0 19 * * *"
     sched.reload()
-    assert len(sched.next_runs()) == 2
+    assert [label for _, label, _ in sched.next_runs()] and len(sched.next_runs()) == 2
+
+
+def test_legacy_global_schedule_becomes_a_group(cfg, tmp_path):
+    from backuper.crypto import SecretBox
+    from backuper.db import Store
+
+    path = tmp_path / "old.db"
+    box = SecretBox(cfg.secret_key)
+    old = Store(path, box)
+    old.set_json("migrated_groups", False)
+    old.set_setting("schedule", "0 3 * * *")
+    old.create_source("A", "smb_folder", {"path": r"\\h\s", "credential": "c"}, set())
+    old.create_source("B", "smb_folder", {"path": r"\\h\s", "credential": "c", "schedule": "0 4 * * *"}, set())
+    old.close()
+    new = Store(path, box)           # reopening runs the one-time migration
+    g = new.get_group_by_name("Daily")
+    assert g and g.schedule == "0 3 * * *"
+    assert new.get_source_by_name("A").config["group"] == "Daily"
+    assert not new.get_source_by_name("B").config.get("group")

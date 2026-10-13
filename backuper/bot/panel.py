@@ -14,7 +14,7 @@ from backuper import jalali
 from backuper.bot.forms import FormState, prompt, summary
 from backuper.destinations.telegram import TOPICS_KEY, esc
 from backuper.engine import EngineBusy
-from backuper.fields import CREDENTIAL, INT, SECRET, TEXT, Field, FieldError
+from backuper.fields import CREDENTIAL, GROUP, INT, SCHEDULE, SECRET, TEXT, Field, FieldError, describe_schedule
 from backuper.models import CATEGORY_TITLES, STATUS_ICON
 from backuper.settings import SETTINGS_BY_KEY, SETTINGS_FIELDS
 from backuper.sources import REGISTRY, RunContext, SourceError, credential_keys_by_type, get_type
@@ -37,6 +37,13 @@ CRED_FIELDS = [
           help="Windows/SMB: DOMAIN\\user or user. SQL: login name. cPanel token: the cPanel username."),
     Field("password", "Password / token", SECRET, help="Password, API token or DirectAdmin login key."),
     Field("note", "Note", TEXT, required=False, default="", help="Optional reminder (where it's used, who owns it)."),
+]
+GROUP_FIELDS = [
+    Field("name", "Group name", TEXT, example="Daily", help="e.g. Daily, Night, Weekly."),
+    Field("schedule", "Start time", SCHEDULE, example="08:00",
+          help="When the group starts. All its sources are backed up, then their files go to Telegram smallest "
+               "first, one at a time — no need to space anything out. Several times: 08:00, 20:00. "
+               "Other days: cron lines like '0 8 * * 6' (Saturdays)."),
 ]
 ADMIN_FIELDS = [
     Field("user_id", "Telegram user ID", INT, min=1, help="They can get it by sending /id to this bot."),
@@ -192,6 +199,16 @@ class Panel:
             "hv": lambda e, a: self.show_run(e, int(a)),
             "hr": lambda e, a: self.resend(e, int(a)),
             "sch": lambda e, _: self.show_schedule(e),
+            "gl": lambda e, _: self.show_groups(e),
+            "gv": lambda e, a: self.show_group(e, int(a)),
+            "ga": lambda e, _: self.start_form(e, FormState("group_add", "🗂 New group", GROUP_FIELDS)),
+            "ge": self.edit_group_field,
+            "gm": lambda e, a: self.show_group_members(e, int(a)),
+            "gmt": self.toggle_group_member,
+            "gr": lambda e, a: self.run_group(e, int(a)),
+            "gx": lambda e, a: self.toggle_group(e, int(a)),
+            "gd": lambda e, a: self.confirm_delete_group(e, int(a)),
+            "gdy": lambda e, a: self.delete_group(e, int(a)),
             "set": lambda e, _: self.show_settings(e),
             "setk": lambda e, a: self.edit_setting(e, a),
             "seta": lambda e, _: self.test_archive(e),
@@ -224,7 +241,7 @@ class Panel:
             lines.append(f"🕘 Last run: {STATUS_ICON.get(r['status'], '•')} #{r['id']} {r['jdate']} "
                          f"({human_size(r['total_bytes'])})")
         if self.app.engine.busy:
-            lines.append("⏳ <b>A run is in progress</b> — /status")
+            lines.append(f"⏳ <b>{len(self.app.engine.runs)} run(s) in progress</b> — /status")
         warn = []
         if not self.store.get_setting("chat_id"):
             warn.append("no Telegram group yet — add me to the group as admin and send /bind there")
@@ -237,15 +254,15 @@ class Panel:
         buttons = [
             [Button.inline("📦 Sources", b"sl:0"), Button.inline("🔑 Credentials", b"cl")],
             [Button.inline("▶️ Run all now", b"ra"), Button.inline("📊 History", b"hl")],
-            [Button.inline("⏰ Schedule", b"sch"), Button.inline("⚙️ Settings", b"set")],
+            [Button.inline("🗂 Groups", b"gl"), Button.inline("⏰ Schedule", b"sch")],
+            [Button.inline("⚙️ Settings", b"set")],
             [Button.inline("👥 Admins", b"al"), Button.inline("❓ Help", b"help")],
         ]
         await self._respond(event, "\n".join(lines), buttons)
 
     async def show_status(self, event) -> None:
-        prog = self.app.engine.progress
-        if prog:
-            text = prog.render()
+        if self.app.engine.busy:
+            text = self.app.engine.render_status()
         else:
             runs = self.store.list_runs(1)
             text = (runs[0]["summary"] or "No runs yet.") if runs else "No runs yet."
@@ -323,7 +340,7 @@ class Panel:
 
     async def start_add_source(self, event, type_id: str) -> None:
         cls = get_type(type_id)
-        fields = [NAME_FIELD, *[f for f in cls.fields if "advanced" not in f.tags]]
+        fields = [NAME_FIELD, *[f for f in cls.all_fields() if "advanced" not in f.tags]]
         await self.start_form(event, FormState("source_add", f"➕ {cls.title}", fields, type_id=type_id))
 
     async def show_source_edit(self, event, sid: int) -> None:
@@ -434,15 +451,14 @@ class Panel:
     # ======================================================================
     async def start_run(self, event, source_ids: list[int] | None, label: str) -> None:
         engine = self.app.engine
-        if engine.busy:
-            await self._respond(event, "⏳ A run is already in progress.\n\n" + (engine.progress.render()
-                                if engine.progress else ""), [[Button.inline("🔄 Refresh", b"stat")], BACK_MAIN])
-            return
         if source_ids is None and not self.store.list_sources(enabled_only=True):
             raise SourceError("There are no enabled sources yet.")
+        if source_ids is not None and not source_ids:
+            raise SourceError("Nothing to run.")
         sender = await event.get_sender()
         who = getattr(sender, "first_name", None) or str(event.sender_id)
-        msg = await self.app.client.send_message(event.chat_id, f"⏳ Starting backup of {esc(label)}…",
+        note = " (its uploads wait for the run in progress)" if engine.busy else ""
+        msg = await self.app.client.send_message(event.chat_id, f"⏳ Starting backup of {esc(label)}…{note}",
                                                  parse_mode="html")
 
         async def on_progress(text: str) -> None:
@@ -453,9 +469,7 @@ class Panel:
 
         async def job() -> None:
             try:
-                await engine.run(source_ids, trigger=f"manual · {who}", on_progress=on_progress, wait=False)
-            except EngineBusy:
-                await on_progress("⏳ Another run started first — try again when it's done.")
+                await engine.run(source_ids, trigger=f"manual · {who}", on_progress=on_progress)
             except Exception as e:  # noqa: BLE001
                 log.exception("manual run failed")
                 await on_progress(f"💥 Run failed: {esc(short_error(e))}")
@@ -483,8 +497,6 @@ class Panel:
         await self._respond(event, (run["summary"] or f"Run #{run_id}: {run['status']}")[:4000], rows)
 
     async def resend(self, event, item_id: int) -> None:
-        if self.app.engine.busy:
-            raise EngineBusy("A run is in progress — try again when it's done.")
         await event.answer("Re-sending from the archive…")
         msg = await self.app.client.send_message(event.chat_id, "📤 Re-sending…")
         try:
@@ -553,22 +565,141 @@ class Panel:
     # schedule & settings
     # ======================================================================
     async def show_schedule(self, event) -> None:
-        main = self.store.get_setting("schedule")
-        lines = ["⏰ <b>Schedule</b> (" + esc(self.app.cfg.timezone.key) + ")", "",
-                 f"Main run: <b>{esc(SETTINGS_BY_KEY['schedule'].display(main))}</b>"]
-        own = [(s.name, s.config.get("schedule")) for s in self.store.list_sources(enabled_only=True)
-               if s.config.get("schedule")]
+        tz = self.app.cfg.timezone
+        lines = [f"⏰ <b>Schedule</b> ({esc(tz.key)})", ""]
+        groups = self.store.list_groups()
+        for g in groups:
+            n = len(self.store.group_members(g.name, enabled_only=True))
+            lines.append(f"{'🗂' if g.enabled else '⏸'} <b>{esc(g.name)}</b>: {esc(describe_schedule(g.schedule))}"
+                         f" — {n} source(s)")
+        names = {g.name.lower() for g in groups}
+        own, manual = [], []
+        for src in self.store.list_sources(enabled_only=True):
+            if (src.config.get("group") or "").lower() in names:
+                continue
+            (own if src.config.get("schedule") else manual).append(src)
         if own:
-            lines += ["", "Sources with their own schedule:"]
-            lines += [f"• {esc(n)}: {esc(SETTINGS_BY_KEY['schedule'].display(c))}" for n, c in own]
+            lines += ["", "Sources with their own time:"]
+            lines += [f"• {esc(x.name)}: {esc(describe_schedule(x.config['schedule']))}" for x in own]
+        if manual:
+            lines += ["", "Manual only (no group, no time): " + esc(", ".join(x.name for x in manual))]
         nxt = self.app.scheduler.next_runs()
         if nxt:
             lines += ["", "Upcoming:"]
-            for when, desc, n in nxt[:5]:
-                j = jalali.to_jalali(when.astimezone(self.app.cfg.timezone))
-                lines.append(f"• {jalali.pretty(j)} — {esc(desc)}, {n} source(s)")
-        rows = [[Button.inline("✏️ Change main schedule", b"setk:schedule")], BACK_MAIN]
+            for when, label, n in nxt[:6]:
+                j = jalali.to_jalali(when.astimezone(tz))
+                lines.append(f"• {jalali.pretty(j)} — {esc(label)}, {n} source(s)")
+        lines += ["", "<i>Each run uploads its files smallest first, one at a time; runs that overlap "
+                  "wait for each other's uploads.</i>"]
+        await self._respond(event, "\n".join(lines), [[Button.inline("🗂 Groups", b"gl")], BACK_MAIN])
+
+    # ======================================================================
+    # groups
+    # ======================================================================
+    async def show_groups(self, event) -> None:
+        rows = []
+        for g in self.store.list_groups():
+            n = len(self.store.group_members(g.name))
+            label = f"{'🗂' if g.enabled else '⏸'} {g.name} · {describe_schedule(g.schedule)} · {n} sources"
+            rows.append([Button.inline(label[:60], f"gv:{g.id}".encode())])
+        rows.append([Button.inline("➕ New group", b"ga"), *BACK_MAIN])
+        text = ("🗂 <b>Backup groups</b>\n\nA group starts at its time, backs up all its sources, then uploads "
+                "their files smallest first, one after another.")
+        await self._respond(event, text, rows)
+
+    async def show_group(self, event, gid: int) -> None:
+        g = self.store.get_group(gid)
+        if g is None:
+            await self.show_groups(event)
+            return
+        members = self.store.group_members(g.name)
+        lines = [f"🗂 <b>{esc(g.name)}</b> — {'✅ enabled' if g.enabled else '⏸ disabled'}",
+                 f"⏰ {esc(describe_schedule(g.schedule))}", ""]
+        if members:
+            lines.append(f"Sources ({len(members)}):")
+            lines += [f"• {'' if m.enabled else '⏸ '}{esc(m.name)}" for m in members]
+        else:
+            lines.append("No sources yet — add some with 📦 Sources in group.")
+        rows = [
+            [Button.inline("▶️ Run group now", f"gr:{gid}".encode()),
+             Button.inline("📦 Sources in group", f"gm:{gid}".encode())],
+            [Button.inline("⏰ Change time", f"ge:{gid}:schedule".encode()),
+             Button.inline("🏷 Rename", f"ge:{gid}:name".encode())],
+            [Button.inline("⏸ Disable" if g.enabled else "▶️ Enable", f"gx:{gid}".encode()),
+             Button.inline("🗑 Delete", f"gd:{gid}".encode())],
+            [Button.inline("⬅️ Groups", b"gl"), *BACK_MAIN],
+        ]
         await self._respond(event, "\n".join(lines), rows)
+
+    async def show_group_members(self, event, gid: int) -> None:
+        g = self.store.get_group(gid)
+        if g is None:
+            return
+        rows, row = [], []
+        for src in self.store.list_sources():
+            current = src.config.get("group") or ""
+            if current.lower() == g.name.lower():
+                label = f"✅ {src.name}"
+            elif current:
+                label = f"↪️ {src.name} ({current})"
+            else:
+                label = f"▫️ {src.name}"
+            row.append(Button.inline(label[:40], f"gmt:{gid}:{src.id}".encode()))
+            if len(row) == 2:
+                rows.append(row)
+                row = []
+        if row:
+            rows.append(row)
+        rows.append([Button.inline("✅ Done", f"gv:{gid}".encode())])
+        text = (f"📦 <b>Sources in {esc(g.name)}</b>\n\nTap to add or remove.\n✅ in this group · "
+                "↪️ in another group (tap to move it here) · ▫️ no group")
+        await self._respond(event, text, rows)
+
+    async def toggle_group_member(self, event, arg: str) -> None:
+        gid_s, sid_s = arg.split(":")
+        g = self.store.get_group(int(gid_s))
+        src = self.store.get_source(int(sid_s))
+        if g is None or src is None:
+            return
+        inside = (src.config.get("group") or "").lower() == g.name.lower()
+        self.store.set_source_group(src.id, "" if inside else g.name)
+        self.app.scheduler.reload()
+        await self.show_group_members(event, g.id)
+
+    async def edit_group_field(self, event, arg: str) -> None:
+        gid_s, key = arg.split(":")
+        g = self.store.get_group(int(gid_s))
+        if g is None:
+            return
+        f = next(f for f in GROUP_FIELDS if f.key == key)
+        await self.start_form(event, FormState("group_edit", f"🗂 {g.name}", [f], editing=True, target=g.id,
+                                               current={"name": g.name, "schedule": g.schedule}))
+
+    async def run_group(self, event, gid: int) -> None:
+        g = self.store.get_group(gid)
+        if g:
+            ids = [m.id for m in self.store.group_members(g.name, enabled_only=True)]
+            await self.start_run(event, ids, f"group {g.name}")
+
+    async def toggle_group(self, event, gid: int) -> None:
+        g = self.store.get_group(gid)
+        if g:
+            self.store.save_group(g.name, g.schedule, enabled=not g.enabled, group_id=g.id)
+            self.app.scheduler.reload()
+            await self.show_group(event, gid)
+
+    async def confirm_delete_group(self, event, gid: int) -> None:
+        g = self.store.get_group(gid)
+        if g:
+            await self._respond(event, f"🗑 Delete group <b>{esc(g.name)}</b>? Its sources stay, without a group "
+                                       "(they then run only at their own time, or manually).",
+                                [[Button.inline("Yes, delete", f"gdy:{gid}".encode()),
+                                  Button.inline("No", f"gv:{gid}".encode())]])
+
+    async def delete_group(self, event, gid: int) -> None:
+        self.store.delete_group(gid)
+        self.app.scheduler.reload()
+        await self.show_groups(event)
 
     async def show_settings(self, event) -> None:
         lines = ["⚙️ <b>Settings</b>", ""]
@@ -667,6 +798,9 @@ class Panel:
     def _cred_names(self) -> list[str]:
         return [c.name for c in self.store.list_credentials()]
 
+    def _group_names(self) -> list[str]:
+        return [g.name for g in self.store.list_groups()]
+
     async def start_form(self, event, state: FormState) -> None:
         self.forms[event.sender_id] = state
         await self._ask(event, state)
@@ -675,7 +809,7 @@ class Panel:
         if state.current_field() is None:
             await self._finish(event, state)
             return
-        text, buttons = prompt(state, self._cred_names())
+        text, buttons = prompt(state, self._cred_names(), self._group_names())
         if isinstance(event, events.CallbackQuery.Event):
             await self._respond(event, text, buttons)
             state.message_id = event.message_id
@@ -703,6 +837,10 @@ class Panel:
             other = self.store.get_credential_by_name(value)
             if other and other.id != state.target:
                 raise FieldError(f"A credential named '{value}' already exists")
+        if state.kind in ("group_add", "group_edit"):
+            other = self.store.get_group_by_name(value)
+            if other and other.id != state.target:
+                raise FieldError(f"A group named '{value}' already exists")
 
     async def form_text(self, event, state: FormState, text: str) -> None:
         f = state.current_field()
@@ -718,6 +856,11 @@ class Panel:
             self._validate_unique(state, f, value)
             if f.kind == CREDENTIAL and value and not self.store.get_credential_by_name(value):
                 raise FieldError(f"No credential named '{value}' — pick one from the buttons")
+            if f.kind == GROUP and value:
+                g = self.store.get_group_by_name(value)
+                if g is None:
+                    raise FieldError(f"No group named '{value}' — pick one from the buttons")
+                value = g.name
         except FieldError as e:
             await event.respond(f"⚠️ {esc(e)}\nTry again, or /cancel.", parse_mode="html")
             return
@@ -785,7 +928,7 @@ class Panel:
             src = self.store.get_source(state.target)
             cls = get_type(src.type)
             self.store.update_source(src.id, config={**src.config, **vals}, secret_keys=cls.secret_keys())
-            if "schedule" in vals:
+            if "schedule" in vals or "group" in vals:
                 self.app.scheduler.reload()
             await self.show_source_edit(event, src.id)
         elif kind == "source_rename":
@@ -813,11 +956,18 @@ class Panel:
         elif kind == "setting":
             key = state.target
             self.store.set_setting(key, vals[key])
-            if key == "schedule":
-                self.app.scheduler.reload()
             if key in ("chat_id", "topic_mode"):
                 self.store.set_json(TOPICS_KEY, {})
-            await (self.show_schedule(event) if key == "schedule" else self.show_settings(event))
+            await self.show_settings(event)
+        elif kind == "group_add":
+            gid = self.store.save_group(vals["name"], vals["schedule"])
+            self.app.scheduler.reload()
+            await self.show_group_members(event, gid)
+        elif kind == "group_edit":
+            g = self.store.get_group(state.target)
+            self.store.save_group(vals.get("name", g.name), vals.get("schedule", g.schedule), g.enabled, group_id=g.id)
+            self.app.scheduler.reload()
+            await self.show_group(event, g.id)
         elif kind == "admin_add":
             self.store.add_admin(vals["user_id"], vals.get("name", ""), uid)
             await self.show_admins(event)

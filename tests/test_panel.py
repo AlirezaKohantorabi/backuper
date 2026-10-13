@@ -137,12 +137,18 @@ async def test_full_admin_flow(panel, store):
     await press(panel, "f:v:0")       # one backup per: pattern
     await press(panel, "f:no")        # recursive
     await say(panel, "7")             # keep_last
-    ev = await say(panel, "26")       # max_age -> summary
-    assert "Save this source?" in ev.responses[-1]
+    await say(panel, "26")            # max_age
+    ev = await press(panel, "f:clr")  # group: none yet -> asks for its own time
+    assert "Own time" in ev.text
+    await say(panel, "19:00")
+    ev = await press(panel, "sa")     # (any button is ignored while the summary waits)
+    src_form = panel.forms.get(OWNER)
+    assert src_form is None or src_form.kind == "source_add"
     await press(panel, "f:save")
     src = store.get_source_by_name("Hamrahan")
     assert src.config["share"] == r"\\172.16.3.251\SQLBackup" and src.config["keep_last"] == 7
-    assert src.config["schedule"] == ""  # advanced field got its default
+    assert src.config["group"] == "" and src.config["schedule"] == "0 19 * * *"
+    assert src.config["telegram"] is True  # advanced field got its default
 
     # view / edit a field / toggle / duplicate / rename
     ev = await press(panel, f"sv:{src.id}")
@@ -178,11 +184,30 @@ async def test_full_admin_flow(panel, store):
     await press(panel, "f:cancel")
     assert OWNER not in panel.forms
 
-    # settings + schedule
+    # groups: create one at 08:00, put Hamrahan in it, see it in the schedule
+    await press(panel, "gl")
+    await press(panel, "ga")
+    await say(panel, "Daily")
+    ev = await say(panel, "08:00")
+    group = store.get_group_by_name("Daily")
+    assert group.schedule == "0 8 * * *"
+    await press(panel, f"gmt:{group.id}:{src.id}")
+    assert store.get_source(src.id).config["group"] == "Daily"
+    ev = await press(panel, f"gv:{group.id}")
+    assert "Hamrahan-DB" in ev.text
+    await press(panel, f"ge:{group.id}:schedule")
+    await say(panel, "07:30")
+    assert store.get_group(group.id).schedule == "30 7 * * *"
+    assert not panel.app.scheduler.plan()          # its only source was disabled above
+    await press(panel, f"sx:{src.id}")             # enable it again
+    plan = panel.app.scheduler.plan()
+    assert [j.source_ids for j in plan.values() if j.label == "group Daily"] == [[src.id]]
+    await press(panel, f"ge:{group.id}:name")
+    await say(panel, "Morning")
+    assert store.get_source(src.id).config["group"] == "Morning"   # members follow a rename
+
+    # settings
     await press(panel, "set")
-    await press(panel, "setk:schedule")
-    await say(panel, "02:30")
-    assert store.get_setting("schedule") == "30 2 * * *"
     await press(panel, "setk:zip_password")
     await say(panel, "zip-pw")
     assert store.get_setting("zip_password") == "zip-pw"
@@ -190,7 +215,7 @@ async def test_full_admin_flow(panel, store):
     await press(panel, "f:v:1")
     assert store.get_setting("topic_mode") == "source"
     ev = await press(panel, "sch")
-    assert "daily 02:30" in ev.text
+    assert "Morning" in ev.text and "daily 07:30" in ev.text
 
     # admins (owner only)
     await press(panel, "aa")

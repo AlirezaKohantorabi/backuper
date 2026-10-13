@@ -20,9 +20,10 @@ backups, see history, re-send files.
 | **Sources** | SQL Server (collect .bak from a share, or run `BACKUP DATABASE` itself), MikroTik (`export show-sensitive` + binary backup), Windows folders over SMB, folders over SFTP/FTP/FTPS, cPanel and DirectAdmin full-account backups |
 | **Packaging** | One zip per backup item, AES-256 (7-Zip/WinRAR), streamed (no temp copy for SMB), already-compressed files stored |
 | **Archive** | Network share or local folder, one folder per **Jalali** date, keeps the newest N days |
-| **Telegram** | MTProto uploads up to 2 GB per file (bigger zips are split into `.zip.001`, `.002`… which 7-Zip opens directly), uploads ordered **smallest → biggest**, forum topics per category or per source, run report + failure DMs |
+| **Scheduling** | Backup **groups** with a start time (all members run together, uploads smallest → biggest, one at a time) plus individual sources at their own time; overlapping runs never upload simultaneously |
+| **Telegram** | MTProto uploads up to 2 GB per file (bigger zips are split into `.zip.001`, `.002`… which 7-Zip opens directly), forum topics per category or per source, run report + failure DMs |
 | **Retention** | "Keep last N" on SQL servers — only after the new backup is safely stored. Hosting-panel archives are deleted from the host right after download |
-| **Admin panel** | Sources, credentials (encrypted), schedule, settings, run now, test connection, history, re-send from archive, admins |
+| **Admin panel** | Sources, groups, credentials (encrypted), schedule, settings, run now, test connection, history, re-send from archive, admins |
 | **Safety** | Secrets encrypted with Fernet, password messages deleted from the chat, SSH host keys pinned on first use, only listed Telegram IDs can use the panel |
 
 ## Quick start (new server)

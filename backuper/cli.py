@@ -165,6 +165,20 @@ def cmd_import(args) -> int:
         except FieldError as e:
             errors.append(f"settings.{key}: {e}")
 
+    from backuper.fields import parse_schedule
+
+    group_names = {g.name.lower() for g in store.list_groups()}
+    for g in doc.get("groups") or []:
+        try:
+            if not g.get("name") or not g.get("schedule"):
+                raise FieldError("needs 'name' and 'schedule'")
+            schedule = parse_schedule(str(g["schedule"]))
+            group_names.add(g["name"].lower())
+            if not args.dry_run:
+                store.save_group(g["name"], schedule, enabled=bool(g.get("enabled", True)))
+        except FieldError as e:
+            errors.append(f"groups.{g.get('name', '?')}: {e}")
+
     cred_names = {c.name.lower() for c in store.list_credentials()}
     for c in doc.get("credentials") or []:
         if not c.get("name"):
@@ -193,6 +207,8 @@ def cmd_import(args) -> int:
             for k in cls.credential_keys():
                 if values.get(k) and values[k].lower() not in cred_names:
                     raise FieldError(f"{k}: credential '{values[k]}' doesn't exist")
+            if values.get("group") and values["group"].lower() not in group_names:
+                raise FieldError(f"group '{values['group']}' doesn't exist (add it under groups:)")
             if args.dry_run:
                 continue
             enabled = bool(s.get("enabled", True))
@@ -207,7 +223,8 @@ def cmd_import(args) -> int:
     for e in errors:
         print(f"✗ {e}", file=sys.stderr)
     print(("Validated" if args.dry_run else "Imported") +
-          f" {len(settings)} setting(s), {len(doc.get('credentials') or [])} credential(s), "
+          f" {len(settings)} setting(s), {len(doc.get('groups') or [])} group(s), "
+          f"{len(doc.get('credentials') or [])} credential(s), "
           f"{len(doc.get('sources') or [])} source(s) with {len(errors)} error(s).")
     if not args.dry_run:
         print("Restart the service (sudo systemctl restart backuper) to load new schedules.")
@@ -222,6 +239,7 @@ def cmd_export(args) -> int:
     doc = {
         "settings": {k: v for k, v in store.all_settings().items()
                      if not SETTINGS_BY_KEY[k].secret and k != "chat_id"},
+        "groups": [{"name": g.name, "schedule": g.schedule, "enabled": g.enabled} for g in store.list_groups()],
         "credentials": [{"name": c.name, "username": c.username, "password": "", "note": c.note}
                         for c in store.list_credentials()],
         "sources": [],

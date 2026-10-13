@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-from backuper.fields import BOOL, CHOICE, CREDENTIAL, INT, SCHEDULE, SECRET, TEXT, Field
+from backuper.fields import BOOL, CHOICE, CREDENTIAL, INT, SECRET, TEXT, Field
 
 FOLDER_FORMATS = {"1405-07-15": "%Y-%m-%d", "1405_07_15": "%Y_%m_%d", "1405.07.15": "%Y.%m.%d"}
 
 SETTINGS_FIELDS: list[Field] = [
-    Field("schedule", "Daily schedule", SCHEDULE, default="0 3 * * *",
-          help="When the main run starts (Tehran time). One or more times like 03:00, 15:30 "
-               "or cron lines separated by ';'. Sources with their own schedule are excluded.",
-          example="03:00"),
     Field("archive_path", "Archive location", TEXT, required=False, default="",
           help=r"Where zips are kept, one sub-folder per Jalali date. A network path like "
                r"\\192.168.10.35\Backuper or a local folder on this server. Empty = Telegram only.",

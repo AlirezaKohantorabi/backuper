@@ -2,11 +2,16 @@
 # Passwords may be left empty here and set later in the bot (🔑 Credentials).
 
 settings:
-  schedule: "03:00"                         # or "03:00, 15:00" or cron "0 3 * * *"
   archive_path: '\\10.0.0.5\Backups'        # or a local folder like /srv/backups
   archive_credential: fileserver
   archive_keep_days: 14
   topic_mode: category                      # category | source | none
+
+groups:                                     # each group starts at its time; uploads smallest file first
+  - name: Daily
+    schedule: "08:00"                       # or "08:00, 20:00" or cron "0 8 * * 6"
+  - name: Night
+    schedule: "01:00"
 
 credentials:
   - name: fileserver
@@ -28,6 +33,7 @@ credentials:
 sources:
   - name: ERP
     type: mssql_collect
+    group: Daily
     share: '\\10.0.0.10\SQLBackup'
     credential: fileserver
     patterns: ['*.bak']
@@ -36,6 +42,7 @@ sources:
 
   - name: Accounting
     type: mssql_trigger
+    group: Daily
     host: 10.0.0.11
     sql_credential: sql-backup
     databases: ['*']
@@ -46,11 +53,14 @@ sources:
 
   - name: Core-Router
     type: mikrotik
+    group: Daily
     host: 10.0.0.1
     credential: mikrotik-bot
 
   - name: Finance-Docs
     type: smb_folder
+    group: Night
+    telegram: false                      # archive only
     path: '\\10.0.0.5\D$\Finance'
     credential: fileserver
 
@@ -61,4 +71,4 @@ sources:
     auth: token
     transfer: ftps
     transfer_credential: ftp-example     # cPanel FTP login
-    schedule: "0 4 * * 5"                # own schedule: Fridays 04:00
+    schedule: "0 4 * * 5"                # no group: its own time, Fridays 04:00

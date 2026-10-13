@@ -1,13 +1,17 @@
-"""Turns the schedule settings into APScheduler cron jobs.
+"""Turns groups and per-source times into APScheduler cron jobs.
 
-Sources without their own schedule run together at the main schedule (so
-their uploads are size-ordered as one batch). A source with its own schedule
-runs at those times instead. Sources sharing a cron line share one run.
+* A group runs all its (enabled) sources together at the group's time(s); the
+  run uploads their zips smallest first, one after another.
+* A source outside a group runs by itself at its own time(s), if it has one.
+* Everything else is manual-only (▶️ Run now).
+Uploads of overlapping runs never happen at the same time (see Engine).
 """
 
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -18,6 +22,14 @@ from backuper.engine import Engine
 from backuper.fields import describe_schedule
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class PlannedJob:
+    key: str              # "group:<id>:<cron>" or "source:<id>:<cron>"
+    cron: str
+    label: str            # "group Daily" / source name
+    source_ids: list[int]
 
 
 class Scheduler:
@@ -37,49 +49,56 @@ class Scheduler:
         if self._sched.running:
             self._sched.shutdown(wait=False)
 
-    def _plan(self) -> dict[str, list[int]]:
-        """cron line -> ids of enabled sources that run at it."""
-        main = [c for c in (self.store.get_setting("schedule") or "").split(";") if c]
-        plan: dict[str, list[int]] = {}
+    def plan(self) -> dict[str, PlannedJob]:
+        groups = {g.name.lower(): g for g in self.store.list_groups()}
+        members: dict[int, list[int]] = defaultdict(list)
+        jobs: dict[str, PlannedJob] = {}
         for src in self.store.list_sources(enabled_only=True):
-            own = [c for c in (src.config.get("schedule") or "").split(";") if c]
-            for cron in own or main:
-                plan.setdefault(cron, []).append(src.id)
-        return plan
+            gname = (src.config.get("group") or "").strip().lower()
+            group = groups.get(gname) if gname else None
+            if group is not None:
+                members[group.id].append(src.id)
+                continue
+            for cron in [c for c in (src.config.get("schedule") or "").split(";") if c]:
+                jobs[f"source:{src.id}:{cron}"] = PlannedJob(f"source:{src.id}:{cron}", cron, src.name, [src.id])
+        for g in groups.values():
+            if not g.enabled or not members[g.id]:
+                continue
+            for cron in [c for c in (g.schedule or "").split(";") if c]:
+                key = f"group:{g.id}:{cron}"
+                jobs[key] = PlannedJob(key, cron, f"group {g.name}", members[g.id])
+        return jobs
 
     def reload(self) -> None:
         self._sched.remove_all_jobs()
-        for cron in self._plan():
+        for job in self.plan().values():
             try:
-                trigger = CronTrigger.from_crontab(cron, timezone=self.tz)
+                trigger = CronTrigger.from_crontab(job.cron, timezone=self.tz)
             except ValueError:
-                log.error("Ignoring invalid cron %r", cron)
+                log.error("Ignoring invalid cron %r for %s", job.cron, job.label)
                 continue
-            self._sched.add_job(self._fire, trigger, args=[cron], id=f"cron:{cron}", replace_existing=True)
-        log.info("Schedule loaded: %s", self.describe() or "nothing scheduled")
+            self._sched.add_job(self._fire, trigger, args=[job.key], id=job.key, replace_existing=True)
+        log.info("Schedule loaded:\n%s", self.describe() or "nothing scheduled")
 
-    async def _fire(self, cron: str) -> None:
-        ids = self._plan().get(cron, [])
-        if not ids:
-            return
-        label = "scheduled" if cron in (self.store.get_setting("schedule") or "").split(";") else \
-            f"scheduled ({describe_schedule(cron)})"
-        await self.engine.run(ids, trigger=label)
-
-    def describe(self) -> str:
-        lines = []
-        for when, desc, n in self.next_runs():
-            nxt = when.strftime("%Y-%m-%d %H:%M") if when else "—"
-            lines.append(f"{desc} → next {nxt} ({n} sources)")
-        return "\n".join(lines)
+    async def _fire(self, key: str) -> None:
+        job = self.plan().get(key)  # re-read: membership may have changed since loading
+        if job and job.source_ids:
+            await self.engine.run(job.source_ids, trigger=f"{job.label} · {describe_schedule(job.cron)}")
 
     def next_runs(self) -> list[tuple[datetime, str, int]]:
-        plan = self._plan()
+        """[(next time, label, number of sources)], soonest first."""
+        plan = self.plan()
         out = []
         for job in self._sched.get_jobs():
-            cron = job.id.split(":", 1)[1]
+            p = plan.get(job.id)
+            if p is None:
+                continue
             # pending jobs (scheduler not started yet) have no next_run_time attribute
             when = getattr(job, "next_run_time", None) or job.trigger.get_next_fire_time(None, datetime.now(self.tz))
-            out.append((when, describe_schedule(cron), len(plan.get(cron, []))))
+            out.append((when, p.label, len(p.source_ids)))
         far = datetime.max.replace(tzinfo=self.tz)
         return sorted(out, key=lambda x: x[0] or far)
+
+    def describe(self) -> str:
+        return "\n".join(f"{when:%Y-%m-%d %H:%M} — {label} ({n} sources)" if when else f"— {label}"
+                         for when, label, n in self.next_runs())

@@ -14,8 +14,8 @@ from typing import Any
 
 from apscheduler.triggers.cron import CronTrigger
 
-TEXT, INT, BOOL, CHOICE, LIST, SECRET, CREDENTIAL, SCHEDULE, UNC, HOST = (
-    "text", "int", "bool", "choice", "list", "secret", "credential", "schedule", "unc", "host",
+TEXT, INT, BOOL, CHOICE, LIST, SECRET, CREDENTIAL, SCHEDULE, UNC, HOST, GROUP = (
+    "text", "int", "bool", "choice", "list", "secret", "credential", "schedule", "unc", "host", "group",
 )
 
 _TRUE = {"1", "y", "yes", "true", "on", "بله", "آره"}
@@ -41,7 +41,8 @@ class Field:
     min: int | None = None
     max: int | None = None
     # Shown in the bot only when this predicate on the other values is true,
-    # e.g. ("auth", "password") -> only if values["auth"] == "password".
+    # e.g. ("auth", "password") -> only if values["auth"] == "password";
+    # a tuple of values means "any of these", e.g. ("group", ("", None)).
     show_if: tuple[str, Any] | None = None
     tags: frozenset[str] = field(default_factory=frozenset)
 
@@ -53,6 +54,8 @@ class Field:
         if not self.show_if:
             return True
         key, expected = self.show_if
+        if isinstance(expected, tuple):
+            return values.get(key) in expected
         return values.get(key) == expected
 
     # -- parsing -----------------------------------------------------------
@@ -123,6 +126,11 @@ class Field:
         if self.kind == SCHEDULE:
             return describe_schedule(value)
         return str(value)
+
+    @property
+    def picks_from_list(self) -> bool:
+        """Answered with buttons listing stored objects (credentials, groups)."""
+        return self.kind in (CREDENTIAL, GROUP)
 
 
 def parse_values(fields: list[Field], raw: dict[str, Any], *, partial: bool = False) -> dict[str, Any]:

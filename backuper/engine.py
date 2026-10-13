@@ -1,11 +1,15 @@
 """Backup run orchestration.
 
-A run has three phases:
+A run (a group at its time, one source at its own time, or "Run now") has three phases:
   1. collect + zip + archive every source (several in parallel),
-  2. upload ALL resulting zips to Telegram, smallest first, so one huge file
-     never holds the rest back,
+  2. upload the run's zips to Telegram smallest first, one after another, so
+     one huge file never holds the rest back. Uploads of all runs share one
+     queue: two files are never uploaded at the same time. Archive-only
+     sources don't hold the upload phase back,
   3. source retention (only for data that is safely stored), archive
      retention, report.
+Runs may overlap (e.g. a 19:00 source while the 08:00 group is still
+uploading); a source that is already running in another run is skipped.
 """
 
 from __future__ import annotations
@@ -92,12 +96,16 @@ class Engine:
         self.store = store
         self.sender = sender
         self.archive = Archive(store)
-        self._lock = asyncio.Lock()
-        self.progress: RunProgress | None = None
+        self._upload_lock = asyncio.Lock()     # one upload at a time, across all runs
+        self._active: dict[int, int] = {}      # source id -> run id currently processing it
+        self.runs: dict[int, RunProgress] = {}
 
     @property
     def busy(self) -> bool:
-        return self._lock.locked()
+        return bool(self.runs)
+
+    def render_status(self) -> str:
+        return "\n\n".join(p.render() for p in self.runs.values())
 
     # -- housekeeping -----------------------------------------------------------
     def startup_cleanup(self) -> None:
@@ -115,14 +123,8 @@ class Engine:
 
     # -- public API --------------------------------------------------------------------
     async def run(self, source_ids: list[int] | None = None, trigger: str = "manual",
-                  on_progress: ProgressCallback | None = None, wait: bool = True) -> int:
+                  on_progress: ProgressCallback | None = None) -> int:
         """Run the given sources (None = every enabled source). Returns the run id."""
-        if not wait and self._lock.locked():
-            raise EngineBusy("a backup run is already in progress")
-        async with self._lock:
-            return await self._run(source_ids, trigger, on_progress)
-
-    async def _run(self, source_ids, trigger, on_progress) -> int:
         tz = self.cfg.timezone
         now = jalali.now_jalali(tz)
         folder = jalali.folder_name(now, FOLDER_FORMATS.get(self.store.get_setting("folder_format"), "%Y-%m-%d"))
@@ -131,33 +133,45 @@ class Engine:
         else:
             sources = [s for s in (self.store.get_source(i) for i in source_ids) if s is not None]
         run_id = self.store.create_run(trigger, folder)
+        results: list[ItemResult] = []
+        for src in [s for s in sources if s.id in self._active]:
+            results.append(ItemResult(source_id=src.id, source_name=src.name, status=SKIPPED,
+                                      message=f"already running in run #{self._active[src.id]}"))
+        sources = [s for s in sources if s.id not in self._active]
+        for src in sources:
+            self._active[src.id] = run_id
         run_dir = self.cfg.staging_dir / f"run-{run_id}"
         prog = RunProgress(run_id=run_id, trigger=trigger,
                            sources={s.id: SourceProgress(s.name) for s in sources})
-        self.progress = prog
+        self.runs[run_id] = prog
         started = time.monotonic()
         log.info("Run #%d (%s) started: %d source(s), folder %s", run_id, trigger, len(sources), folder)
 
         stop_ticker = asyncio.Event()
         ticker = asyncio.create_task(self._ticker(prog, on_progress, stop_ticker)) if on_progress else None
-        results: list[ItemResult] = []
         pending: dict[int, _Pending] = {}
+        tasks: dict[int, asyncio.Task] = {}
+        archive_note = ""
         try:
-            # Phase 1 — collect, zip, archive
+            # Phase 1 — collect, zip, archive (several sources in parallel)
             sem = asyncio.Semaphore(int(self.store.get_setting("concurrency") or 3))
-            results = list(await asyncio.gather(*(
-                self._process_source(src, now, folder, run_dir, sem, prog, pending) for src in sources
-            )))
-
-            # Phase 2 — upload, smallest first
-            prog.phase = "uploading"
-            await self._upload_all(results, now, prog)
+            tasks = {src.id: asyncio.create_task(self._process_source(src, now, folder, run_dir, sem, prog, pending))
+                     for src in sources}
+            # Phase 2 — as soon as every Telegram-bound source is ready: upload, smallest first.
+            # Archive-only sources (e.g. huge folders) keep zipping meanwhile.
+            tg = [tasks[s.id] for s in sources if s.config.get("telegram", True)]
+            tg_results = list(await asyncio.gather(*tg))
+            if self._upload_lock.locked():
+                prog.phase = "waiting for another run's uploads"
+            async with self._upload_lock:
+                prog.phase = "uploading"
+                await self._upload_all(tg_results, now, prog)
+            prog.phase = "finishing"
+            results += list(await asyncio.gather(*tasks.values()))
 
             # Phase 3 — retention + status
-            prog.phase = "finishing"
             for res in results:
                 await self._finish_source(res, pending.get(res.source_id))
-            archive_note = ""
             if self.archive.enabled:
                 try:
                     pruned = await self.archive.prune()
@@ -167,8 +181,16 @@ class Engine:
                     archive_note = f"⚠️ archive retention failed: {esc(short_error(e))}"
                     log.exception("archive prune failed")
             self._prune_unsent()
-        except Exception as e:
+        except BaseException as e:
+            for t in tasks.values():
+                t.cancel()
+            if isinstance(e, asyncio.CancelledError):
+                raise
             log.exception("Run #%d crashed", run_id)
+            done = {r.source_id for r in results}
+            for t_id, t in tasks.items():
+                if t_id not in done and t.done() and not t.cancelled() and t.exception() is None:
+                    results.append(t.result())
             for res in results:
                 if res.status == OK and not res.files:
                     res.status, res.message = FAILED, f"run aborted: {short_error(e)}"
@@ -179,7 +201,9 @@ class Engine:
                 await ticker
             self._keep_unsent(results)
             shutil.rmtree(run_dir, ignore_errors=True)
-            self.progress = None
+            for src in sources:
+                self._active.pop(src.id, None)
+            self.runs.pop(run_id, None)
 
         duration = time.monotonic() - started
         status, report = self._report(run_id, trigger, now, results, duration, archive_note)
@@ -188,7 +212,7 @@ class Engine:
             self.store.add_run_item(run_id, res.source_id, res.source_name, res.status,
                                     "; ".join(filter(None, [res.message, *res.warnings])),
                                     [self._file_dict(f) for f in res.files], res.total_size,
-                                    res.finished - res.started)
+                                    (res.finished - res.started) if res.started else 0)
         self.store.finish_run(run_id, status, total, report)
         self.store.prune_runs()
         await self._publish_report(status, report)
@@ -505,7 +529,7 @@ class Engine:
                  for d in json.loads(row["files"])]
         if not files:
             return "That item has no files."
-        async with self._lock:
+        async with self._upload_lock:
             tmp_dir = self.cfg.staging_dir / "resend"
             sent, failed = 0, []
             now = jalali.now_jalali(self.cfg.timezone)

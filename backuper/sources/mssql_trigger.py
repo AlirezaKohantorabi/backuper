@@ -8,7 +8,7 @@ from typing import Any
 
 import pymssql
 
-from backuper.fields import BOOL, CREDENTIAL, HOST, INT, LIST, TEXT, UNC, Field
+from backuper.fields import BOOL, CHOICE, CREDENTIAL, HOST, INT, LIST, TEXT, UNC, Field
 from backuper.models import Artifact, Entry
 from backuper.sources.base import SourceError, SourceType
 from backuper.transport.smb import join as unc_join
@@ -47,7 +47,14 @@ class MSSQLTrigger(SourceType):
         Field("compression", "SQL compression", BOOL, default=False,
               help="WITH COMPRESSION — not supported on Express edition."),
         Field("keep_last", "Keep last N on server", INT, default=7, min=0, max=1000,
-              help="Old backups made by this source are deleted beyond N per database. 0 = never delete."),
+              help="Old backups are deleted beyond N per database. 0 = never delete."),
+        Field("retention_scope", "Keep last N counts", CHOICE, default="mine", choices=("mine", "all"),
+              help="mine: only backups this bot made. all: every <database>_*.bak in the folder — also the ones "
+                   "the application makes itself (they are deleted too beyond N)."),
+        Field("encryption", "Connection encryption", CHOICE, default="auto", choices=("auto", "off", "require"),
+              help="auto works for SQL Server 2014+. 'off' is needed for old servers (SQL 2008/2012 without "
+                   "TLS 1.2 updates) — the login then crosses the LAN unencrypted.",
+              tags=frozenset({"advanced"})),
         Field("timeout_minutes", "Timeout (minutes)", INT, default=180, min=1, max=24 * 60),
     ]
 
@@ -66,6 +73,8 @@ class MSSQLTrigger(SourceType):
             "timeout": int(self.cfg.get("timeout_minutes") or 180) * 60,
             "autocommit": True, "appname": "backuper", "charset": "UTF-8",
         }
+        if self.cfg.get("encryption") in ("off", "require"):
+            kw["encryption"] = self.cfg["encryption"]
         if self.cfg.get("instance"):
             kw["server"] = f"{self.cfg['host']}\\{self.cfg['instance']}"
         else:
@@ -74,7 +83,10 @@ class MSSQLTrigger(SourceType):
         try:
             return pymssql.connect(**kw)
         except pymssql.Error as e:
-            raise SourceError(f"can't connect to SQL Server {kw['server']}: {_sql_err(e)}") from e
+            hint = ""
+            if "TDS server connection failed" in str(e) and self.cfg.get("encryption", "auto") == "auto":
+                hint = " (old SQL Server? try 'Connection encryption' = off)"
+            raise SourceError(f"can't connect to SQL Server {kw['server']}: {_sql_err(e)}{hint}") from e
 
     def _list_dbs(self, conn) -> list[str]:
         cur = conn.cursor()
@@ -164,10 +176,12 @@ class MSSQLTrigger(SourceType):
         smb = self.ctx.smb(self.cfg["share_credential"])
         files = await asyncio.to_thread(smb.list_files, self.cfg["share"])
         total = 0
+        scope_all = self.cfg.get("retention_scope") == "all"
         for a in artifacts:
-            prefix = safe_filename(a.meta["db"]) + "_"
-            # only files this source created: <db>_<yyyy-mm-dd>_<hhmm>.bak
-            rx = re.compile(re.escape(prefix) + r"\d{4}-\d{2}-\d{2}_\d{4}\.bak$", re.IGNORECASE)
+            prefix = re.escape(safe_filename(a.meta["db"]) + "_")
+            # mine: only files this source created (<db>_<yyyy-mm-dd>_<hhmm>.bak); all: any <db>_*.bak
+            rx = re.compile(prefix + (r".*\.bak$" if scope_all else r"\d{4}-\d{2}-\d{2}_\d{4}\.bak$"),
+                            re.IGNORECASE)
             mine = sorted((f for f in files if rx.match(f.name)), key=lambda f: f.mtime, reverse=True)
             total += await apply_retention(smb, mine, keep, self.ctx)
         return [f"retention: deleted {total} old file(s), keeping {keep}"] if total else []

@@ -47,8 +47,8 @@ journalctl -u backuper -f
    `.venv/bin/backuper credential <name> -u <username>`. For Windows shares, run
    [windows/setup-backuper-access.ps1](windows/setup-backuper-access.ps1) on each server first.
 5. **📦 Sources → ➕ Add source** — for each server. Use **🧪 Test** on each one.
-6. **⏰ Schedule** — set the daily time (default 03:00). Schedule the bot *after* the SQL
-   jobs finish.
+6. **🗂 Groups** — create a group (e.g. *Daily*, 08:00) and tick its sources. Each run uploads
+   smallest file first, one at a time. Sources outside groups can have their own time.
 7. **▶️ Run all now** to try the whole thing once.
 
 Bulk alternative to steps 4–5: write a YAML file (see

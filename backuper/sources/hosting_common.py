@@ -8,7 +8,7 @@ import fnmatch
 import posixpath
 import time
 
-from backuper.fields import BOOL, CHOICE, CREDENTIAL, INT, Field
+from backuper.fields import BOOL, CHOICE, CREDENTIAL, INT, TEXT, Field
 from backuper.models import Artifact, Entry
 from backuper.sources.base import RunContext, SourceError
 from backuper.transport.remote import DEFAULT_PORTS, PROTOCOLS, RemoteEntry, RemoteFS, open_remote
@@ -18,6 +18,9 @@ ARCHIVE_PATTERNS = ["backup-*.tar.gz", "backup-*.tar.zst", "backup-*.tar", "back
 TRANSFER_FIELDS = [
     Field("transfer", "Download via", CHOICE, default="ftps", choices=PROTOCOLS,
           help="How to pull the finished archive. ftps = FTP over TLS (recommended over plain ftp)."),
+    Field("transfer_host", "Download host", TEXT, required=False, default="",
+          help="Empty = same as the panel host. On shared hosting the FTP certificate is often issued to the "
+               "server's own name (e.g. box402.parsvds.com) — put that here to keep certificate checks on."),
     Field("transfer_port", "Download port", INT, default=0, min=0, max=65535, help="0 = default (21 / 22)."),
     Field("transfer_credential", "Download login", CREDENTIAL, required=False, default="",
           help="FTP/SFTP login. Empty = same as the panel login (only works with password auth)."),
@@ -31,7 +34,7 @@ def open_transfer(ctx: RunContext, cfg: dict, panel_cred_name: str) -> RemoteFS:
     cred = ctx.credential(cfg.get("transfer_credential") or panel_cred_name, what="download login")
     proto = cfg.get("transfer", "ftps")
     port = int(cfg.get("transfer_port") or DEFAULT_PORTS[proto])
-    return open_remote(proto, cfg["host"], port, cred.username, cred.password,
+    return open_remote(proto, cfg.get("transfer_host") or cfg["host"], port, cred.username, cred.password,
                        verify_tls=bool(cfg.get("verify_tls", True)),
                        pinned_key=ctx.get_state("transfer_host_key", ""))
 

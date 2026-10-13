@@ -30,6 +30,16 @@ class Credential:
 
 
 @dataclass
+class Group:
+    """Sources that run together at the group's time; their zips are uploaded smallest first."""
+
+    id: int
+    name: str
+    schedule: str
+    enabled: bool = True
+
+
+@dataclass
 class SourceRecord:
     id: int
     name: str

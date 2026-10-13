@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 from pathlib import Path
@@ -23,7 +24,11 @@ class FakeSource(SourceType):
     fields = [Field("sizes", "Sizes", INT, default=0), Field("fail", "Fail", INT, default=0)]
     retained: list[str] = []
 
+    gate: asyncio.Event | None = None  # set by tests to hold a source in "collecting"
+
     async def collect(self):
+        if self.cfg.get("hold") and FakeSource.gate is not None:
+            await FakeSource.gate.wait()
         if self.cfg.get("fail"):
             raise SourceError("server unreachable")
         arts = []
@@ -261,3 +266,73 @@ async def test_collect_retries_upload_next_run_if_telegram_failed(cfg, store, tm
     sender.fail.clear()
     assert store.run_items(await engine.run(trigger="t"))[0]["status"] == OK        # re-sent automatically
     assert len(sender.uploads) == 1
+
+
+class SlowSender(FakeSender):
+    """Uploads take a moment; records how many ran at the same time."""
+
+    def __init__(self):
+        super().__init__()
+        self.active = 0
+        self.max_active = 0
+
+    async def upload_file(self, path, file_name, captions, topic, progress=None, retries=3):
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        await asyncio.sleep(0.05)
+        self.uploads.append((file_name, path.stat().st_size, topic))
+        self.active -= 1
+        return 1
+
+
+async def test_overlapping_runs_never_upload_at_the_same_time(cfg, store):
+    a = store.create_source("GroupA", "fake", {"sizes": [30_000, 1_000, 9_000]}, set())
+    b = store.create_source("Single", "fake", {"sizes": [500, 20_000]}, set())
+    sender = SlowSender()
+    engine = Engine(cfg, store, sender)
+    r1, r2 = await asyncio.gather(engine.run([a], trigger="group"), engine.run([b], trigger="single"))
+    assert sender.max_active == 1                       # one upload at a time, across runs
+    names = [n for n, _, _ in sender.uploads]
+    first_run = [n for n in names if n.startswith("GroupA")]
+    assert [sz for n, sz, _ in sender.uploads if n.startswith("GroupA")] == sorted(
+        sz for n, sz, _ in sender.uploads if n.startswith("GroupA"))  # smallest first within the run
+    # each run's uploads stay together (no interleaving)
+    idx = [names.index(n) for n in first_run]
+    assert idx == list(range(min(idx), min(idx) + len(idx)))
+    assert {i["status"] for r in (r1, r2) for i in store.run_items(r)} == {OK}
+
+
+async def test_archive_only_source_does_not_delay_uploads(cfg, store, tmp_path):
+    store.set_setting("archive_path", str(tmp_path / "arch"))
+    store.create_source("Big-folder", "fake", {"sizes": [100], "telegram": False, "hold": True}, set())
+    store.create_source("DB", "fake", {"sizes": [100]}, set())
+    FakeSource.gate = asyncio.Event()
+    sender = FakeSender()
+    engine = Engine(cfg, store, sender)
+    task = asyncio.create_task(engine.run(trigger="t"))
+    for _ in range(100):                     # DB gets uploaded while Big-folder is still "zipping"
+        if sender.uploads:
+            break
+        await asyncio.sleep(0.01)
+    assert [n for n, _, _ in sender.uploads][0].startswith("DB_") and not task.done()
+    FakeSource.gate.set()
+    run_id = await task
+    FakeSource.gate = None
+    assert {i["source_name"]: i["status"] for i in store.run_items(run_id)} == {"Big-folder": OK, "DB": OK}
+
+
+async def test_source_already_running_is_skipped(cfg, store):
+    sid = store.create_source("Busy", "fake", {"sizes": [10], "hold": True}, set())
+    FakeSource.gate = asyncio.Event()
+    engine = Engine(cfg, store, FakeSender())
+    first = asyncio.create_task(engine.run([sid], trigger="group"))
+    await asyncio.sleep(0.05)
+    assert engine.busy and "Busy" in engine.render_status()
+    second = await engine.run([sid], trigger="manual")
+    item = store.run_items(second)[0]
+    from backuper.models import SKIPPED
+    assert item["status"] == SKIPPED and "already running" in item["message"]
+    FakeSource.gate.set()
+    await first
+    FakeSource.gate = None
+    assert not engine.busy

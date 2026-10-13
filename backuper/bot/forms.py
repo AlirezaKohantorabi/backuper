@@ -11,7 +11,7 @@ from typing import Any
 from telethon import Button
 
 from backuper.destinations.telegram import esc
-from backuper.fields import BOOL, CHOICE, CREDENTIAL, SECRET, Field, FieldError
+from backuper.fields import BOOL, CHOICE, CREDENTIAL, GROUP, SECRET, Field, FieldError
 
 
 @dataclass
@@ -77,11 +77,12 @@ class FormState:
         self.index += 1
 
 
-def prompt(state: FormState, credentials: list[str]) -> tuple[str, list[list[Button]]]:
+def prompt(state: FormState, credentials: list[str], groups: list[str] = ()) -> tuple[str, list[list[Button]]]:
     """Text + buttons asking for the current field."""
     f = state.current_field()
     assert f is not None
-    state.choices = list(credentials[:40]) if f.kind == CREDENTIAL else []
+    state.choices = (list(credentials[:40]) if f.kind == CREDENTIAL else
+                     list(groups[:40]) if f.kind == GROUP else [])
     pos, total = state.visible_count()
     lines = [f"<b>{esc(state.title)}</b>" + (f"  ({pos}/{total})" if total > 1 else ""), "",
              f"✏️ <b>{esc(f.label)}</b>"]
@@ -95,7 +96,7 @@ def prompt(state: FormState, credentials: list[str]) -> tuple[str, list[list[But
         lines.append(f"Default: <code>{esc(f.display(f.default))}</code>")
     if f.kind == SECRET:
         lines.append("🔒 Your message will be deleted right after it's read.")
-    elif f.kind not in (BOOL, CHOICE, CREDENTIAL):
+    elif f.kind not in (BOOL, CHOICE, CREDENTIAL, GROUP):
         lines.append("<i>Send the value as a message.</i>")
 
     rows: list[list[Button]] = []
@@ -107,13 +108,18 @@ def prompt(state: FormState, credentials: list[str]) -> tuple[str, list[list[But
         for i, name in enumerate(state.choices):
             rows.append([Button.inline(f"🔑 {name}", f"f:c:{i}".encode())])
         rows.append([Button.inline("➕ New credential", b"f:newcred")])
+    elif f.kind == GROUP:
+        for i, name in enumerate(state.choices):
+            rows.append([Button.inline(f"🗂 {name}", f"f:c:{i}".encode())])
+        rows.append([Button.inline("🚫 No group (own time / manual)", b"f:clr")])
 
     extra = []
     if state.editing and f.key in state.current:
         extra.append(Button.inline("↩️ Keep current", b"f:keep"))
-    elif f.default is not None and not (f.required and f.default in ("", [])):
+    elif f.default not in (None, "", []) or (f.default is not None and not f.required and not f.picks_from_list
+                                             and f.kind not in (BOOL, CHOICE)):
         extra.append(Button.inline("⏭ Use default", b"f:def"))
-    if not f.required and (state.editing or f.default in (None, "", [])):
+    if not f.required and f.kind != GROUP and (state.editing or f.default in (None, "", [])):
         extra.append(Button.inline("🧹 Empty", b"f:clr"))
     if extra:
         rows.append(extra)

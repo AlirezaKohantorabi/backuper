@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import jdatetime
 
 from backuper import jalali
-from backuper.fields import BOOL, CREDENTIAL, INT, SCHEDULE, TEXT, Field
+from backuper.fields import BOOL, CREDENTIAL, GROUP, INT, SCHEDULE, TEXT, Field
 from backuper.models import Artifact, Credential, SourceRecord
 from backuper.transport.smb import SMB
 
@@ -32,6 +32,12 @@ class SourceError(RuntimeError):
 
 
 COMMON_FIELDS: list[Field] = [
+    Field("group", "Backup group", GROUP, required=False, default="",
+          help="Sources in a group run together at the group's time and their files are uploaded smallest "
+               "first, one after another. 'No group' = this source runs at its own time (or only manually)."),
+    Field("schedule", "Own time", SCHEDULE, required=False, default="", show_if=("group", ("", None)),
+          help="Only for sources outside a group: when this one runs by itself, e.g. 19:00 "
+               "(or cron lines separated by ';'). Empty = manual only."),
     Field("telegram", "Send to Telegram", BOOL, default=True,
           help="Off = keep it only in the archive (for data too big for Telegram). The zip is then written "
                "straight into the archive, without a temporary copy on this server.",
@@ -40,9 +46,6 @@ COMMON_FIELDS: list[Field] = [
           help="Keep only the newest N backups of this source in the archive. 0 = follow the global "
                "'Archive days to keep'. Useful for very large folders.",
           tags=frozenset({"advanced"})),
-    Field("schedule", "Own schedule", SCHEDULE, required=False, default="",
-          help="Leave empty to run with the main daily schedule. Set e.g. 'fri 04:00' as cron "
-               "'0 4 * * 5' to run this source separately.", tags=frozenset({"advanced"})),
     Field("topic", "Telegram topic", TEXT, required=False, default="",
           help="Override the topic this source posts to (topic name). Empty = automatic.",
           tags=frozenset({"advanced"})),

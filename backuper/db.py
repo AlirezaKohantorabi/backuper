@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from backuper.crypto import PREFIX, SecretBox
-from backuper.models import Credential, SourceRecord
+from backuper.models import Credential, Group, SourceRecord
 from backuper.settings import SETTINGS_BY_KEY
 
 SCHEMA_VERSION = 1
@@ -60,6 +60,14 @@ CREATE TABLE IF NOT EXISTS run_items (
     seconds REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS run_items_run ON run_items(run_id);
+CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    schedule TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS admins (
     user_id INTEGER PRIMARY KEY,
     name TEXT NOT NULL DEFAULT '',
@@ -86,6 +94,24 @@ class Store:
             self._conn.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)", (str(SCHEMA_VERSION),)
             )
+        self._migrate_main_schedule()
+
+    def _migrate_main_schedule(self) -> None:
+        """v1 had one global 'schedule' setting; turn it into a group called Daily once."""
+        if self.get_json("migrated_groups"):
+            return
+        legacy = self._q("SELECT value FROM settings WHERE key='schedule'")
+        rows = self._q("SELECT id, config FROM sources")
+        ungrouped = [r for r in rows if not json.loads(r["config"]).get("schedule")
+                     and not json.loads(r["config"]).get("group")]
+        if ungrouped and not self.list_groups():
+            schedule = json.loads(legacy[0]["value"]) if legacy else "0 3 * * *"
+            self.save_group("Daily", schedule)
+            for r in ungrouped:  # edit the raw JSON: secrets stay encrypted as they are
+                cfg = json.loads(r["config"])
+                cfg["group"] = "Daily"
+                self._x("UPDATE sources SET config=? WHERE id=?", (json.dumps(cfg, ensure_ascii=False), r["id"]))
+        self.set_json("migrated_groups", True)
 
     def close(self) -> None:
         with self._lock:
@@ -247,6 +273,62 @@ class Store:
 
     def delete_source(self, source_id: int) -> None:
         self._x("DELETE FROM sources WHERE id=?", (source_id,))
+
+    # -- groups -----------------------------------------------------------------
+    @staticmethod
+    def _grp(r: sqlite3.Row) -> Group:
+        return Group(id=r["id"], name=r["name"], schedule=r["schedule"], enabled=bool(r["enabled"]))
+
+    def list_groups(self) -> list[Group]:
+        return [self._grp(r) for r in self._q("SELECT * FROM groups ORDER BY name COLLATE NOCASE")]
+
+    def get_group(self, group_id: int) -> Group | None:
+        rows = self._q("SELECT * FROM groups WHERE id=?", (group_id,))
+        return self._grp(rows[0]) if rows else None
+
+    def get_group_by_name(self, name: str) -> Group | None:
+        rows = self._q("SELECT * FROM groups WHERE name=?", (name,))
+        return self._grp(rows[0]) if rows else None
+
+    def save_group(self, name: str, schedule: str, enabled: bool = True, group_id: int | None = None) -> int:
+        now = _now()
+        if group_id is None:
+            existing = self.get_group_by_name(name)
+            group_id = existing.id if existing else None
+        if group_id is None:
+            return self._x("INSERT INTO groups(name, schedule, enabled, created_at, updated_at) VALUES(?,?,?,?,?)",
+                           (name, schedule, int(enabled), now, now))
+        old = self.get_group(group_id)
+        self._x("UPDATE groups SET name=?, schedule=?, enabled=?, updated_at=? WHERE id=?",
+                (name, schedule, int(enabled), now, group_id))
+        if old and old.name != name:
+            self._set_group_refs(old.name, name)
+        return group_id
+
+    def delete_group(self, group_id: int) -> None:
+        g = self.get_group(group_id)
+        if g:
+            self._set_group_refs(g.name, "")
+            self._x("DELETE FROM groups WHERE id=?", (group_id,))
+
+    def _set_group_refs(self, old: str, new: str) -> None:
+        for r in self._q("SELECT id, config FROM sources"):
+            cfg = json.loads(r["config"])
+            if (cfg.get("group") or "").lower() == old.lower():
+                cfg["group"] = new
+                self._x("UPDATE sources SET config=? WHERE id=?", (json.dumps(cfg, ensure_ascii=False), r["id"]))
+
+    def set_source_group(self, source_id: int, group_name: str) -> None:
+        rows = self._q("SELECT config FROM sources WHERE id=?", (source_id,))
+        if rows:
+            cfg = json.loads(rows[0]["config"])
+            cfg["group"] = group_name
+            self._x("UPDATE sources SET config=?, updated_at=? WHERE id=?",
+                    (json.dumps(cfg, ensure_ascii=False), _now(), source_id))
+
+    def group_members(self, name: str, enabled_only: bool = False) -> list[SourceRecord]:
+        return [s for s in self.list_sources(enabled_only=enabled_only)
+                if (s.config.get("group") or "").lower() == name.lower()]
 
     # -- runs --------------------------------------------------------------------
     def create_run(self, trigger: str, jdate: str) -> int:
