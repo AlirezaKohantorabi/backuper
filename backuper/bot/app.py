@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from urllib.parse import unquote, urlparse
 
@@ -84,7 +85,11 @@ class BotApp:
         self.engine.startup_cleanup()
         self.panel.register()
         self.scheduler.start()
+        from backuper.status import StatusWriter
+
+        status = asyncio.create_task(StatusWriter(self.cfg, self.store, self.engine, self.scheduler).run())
         try:
             await self.client.run_until_disconnected()
         finally:
+            status.cancel()
             self.scheduler.shutdown()

@@ -145,6 +145,7 @@ database's secrets can only be decrypted with `SECRET_KEY`).
 | Install / upgrade | `git pull && ./install.sh` (keeps `.env` and `data/`), then `sudo systemctl restart backuper`. See [SETUP.md](SETUP.md). |
 | Start / stop / status | `sudo systemctl restart|stop|status backuper` |
 | Logs | per run: bot 📄 Log / `backuper log [id]`; service: `journalctl -u backuper -f`, `data/logs/backuper.log` |
+| What's running now? | `E:\Backuper\_backuper-status.txt` (open in Explorer), `backuper status`, the bot's `/status`, the live message in 📊 Reports |
 | Run now | bot ▶️ (all / a group / a source) or `backuper run [Name…]` |
 | Check config | `backuper check`, `backuper test [Name…]`, `backuper list` |
 | Move to another company | clone + `./install.sh` + new bot + `backuper import company.yaml` + passwords. |

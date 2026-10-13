@@ -62,6 +62,7 @@ files in the order below.
 | [backuper/packager.py](backuper/packager.md) | AES-256 zip creation, splitting for Telegram |
 | [backuper/scheduler.py](backuper/scheduler.md) | groups / own times / one-time runs → timers |
 | [backuper/settings.py](backuper/settings.md) | the global settings shown in ⚙️ Settings |
+| [backuper/status.py](backuper/status.md) | live status file in the archive (`_backuper-status.txt`) and `backuper status` |
 | [backuper/util.py](backuper/util.md) | small helpers (sizes, names, retries) |
 | [backuper/bot/\_\_init\_\_.py](backuper/bot/__init__.md) | package marker |
 | [backuper/bot/app.py](backuper/bot/app.md) | Telegram client + wiring (engine, scheduler, panel) |

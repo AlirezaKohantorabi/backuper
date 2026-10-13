@@ -37,6 +37,14 @@ run(source_ids, trigger, upload_from)
   a file with the same name — this was a real bug caught by a test);
 - without Telegram configured (archive-only mode) every zip goes straight to the archive.
 
+## Seeing a run in progress
+
+- **Manual runs** (▶️ in the bot): a progress message in the admin's chat, updated every few seconds.
+- **Scheduled and one-time runs** (when Telegram works): a live message in the 📊 Reports topic, updated
+  every ~20 s, which turns into the final report at the end.
+- **Always** (also archive-only mode): the [status file](status.md) `E:\Backuper\_backuper-status.txt`
+  and `backuper status`.
+
 ## Logging
 
 Each run sets the run id (and each source task its source name) in [logctx](logctx.md), so every line is
@@ -52,9 +60,13 @@ warnings, and full tracebacks for unexpected errors.
 | `ProgressCallback` | Type of the function that receives progress text (the bot edits a message with it). |
 | `_speed` | "25.8 MB/s" for log lines. |
 | `MIN_FREE_BYTES` | Refuse to zip into staging with less than 1 GB free. |
-| `SourceProgress` | Live state of one source in a run (phase, bytes done/total). |
-| `RunProgress` | Live state of a run (phase, sources, current upload). |
-| `RunProgress.render` | The text shown in the bot's progress message and `/status`. |
+| `SourceProgress` | Live state of one source in a run (phase, bytes done/total, when the phase started). |
+| `SourceProgress.begin` | Start a new step: resets the byte counter and the clock used for speed and time left. |
+| `SourceProgress.line` | "Edari: copying → archive 41% · 8.7 GB / 21.2 GB · 52.0 MB/s · ~4m 10s left" (✓ ready, ✗ failed, ⏭ nothing new). |
+| `DONE_ICONS` | Markers for finished steps. |
+| `progress_text` | "41% · size done / total · speed · time left" (or the elapsed time if the size is unknown). |
+| `RunProgress` | Live state of a run (phase, sources, current upload with its start time). |
+| `RunProgress.render` | The run's live status: HTML for Telegram (progress message, `/status`), plain text for the [status file](status.md). Lists every source and the upload in progress. |
 | `_Pending` | Keeps the plugin instance and its (artifact, packaged file) pairs until phase 3 needs them. |
 | `Engine` | One per process; holds the upload lock, the active-source map and the live runs. |
 | `Engine.__init__` | Wires config, store, sender (or `None` = archive-only) and the archive. |
@@ -76,7 +88,7 @@ warnings, and full tracebacks for unexpected errors.
 | `Engine._prune_source_archive` | "Archive copies to keep": remembers which archive paths each run produced and deletes the oldest beyond N (never one that is also part of a kept copy). |
 | `Engine._keep_unsent` | Moves zips that went nowhere to `staging/unsent`. |
 | `Engine._report` | Builds the run's status and report text (HTML for Telegram, ≤ 4000 chars). |
-| `Engine._publish_report` | Posts the report to the Reports topic and DMs admins on warnings/failures. |
+| `Engine._publish_report` | Posts the report to the Reports topic (unless the live progress message already turned into the report) and DMs admins on warnings/failures. |
 | `Engine._file_dict` | `PackagedFile` → JSON-able dict for history ("Resend" needs it). |
-| `Engine._ticker` | Pushes progress text every ~6 s while a run is going (only when it changed). |
+| `Engine._ticker` | Pushes progress text while a run is going (every ~6 s for the admin's own progress message, every ~20 s for the live message in the group), only when it changed. |
 | `Engine.resend_item` | "📤 Resend" from history: fetches the zip from the archive (or `unsent`) and uploads it again, through the same upload lock. |

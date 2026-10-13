@@ -54,6 +54,35 @@ class SourceProgress:
     phase: str = "waiting"
     done_bytes: int = 0
     total_bytes: int = 0
+    phase_started: float = field(default_factory=time.monotonic)
+
+    def begin(self, phase: str, total: int = 0) -> None:
+        """Start a new step (resets the byte counter and the clock used for speed/time left)."""
+        self.phase, self.done_bytes, self.total_bytes, self.phase_started = phase, 0, total, time.monotonic()
+
+    def line(self) -> str:
+        """'Edari: copying → archive 41% · 8.7 GB / 21.2 GB · 52.0 MB/s · ~4m 10s left' (plain text)."""
+        icon = DONE_ICONS.get(self.phase, "")
+        text = f"{icon + ' ' if icon else ''}{self.name}: {self.phase}"
+        if self.phase in DONE_ICONS or self.phase == "waiting":
+            return text
+        elapsed = time.monotonic() - self.phase_started
+        return text + " " + progress_text(self.done_bytes, self.total_bytes, elapsed)
+
+
+DONE_ICONS = {"ready": "✓", "failed": "✗", "nothing new": "⏭"}
+
+
+def progress_text(done: int, total: int, elapsed: float) -> str:
+    """'41% · 8.7 GB / 21.2 GB · 52.0 MB/s · ~4m 10s left', or just the elapsed time if sizes are unknown."""
+    if not total:
+        return f"({human_duration(elapsed)})"
+    parts = [f"{min(done * 100 // total, 100)}%", f"{human_size(done)} / {human_size(total)}"]
+    if done and elapsed > 1:
+        speed = done / elapsed
+        parts.append(f"{speed / 2**20:.1f} MB/s")
+        parts.append(f"~{human_duration(max(total - done, 0) / speed)} left")
+    return " · ".join(parts)
 
 
 @dataclass
@@ -68,18 +97,17 @@ class RunProgress:
     upload_name: str = ""
     upload_done: int = 0
     upload_size: int = 0
+    upload_started: float = 0.0
 
-    def render(self) -> str:
-        lines = [f"⏳ <b>Run #{self.run_id}</b> ({esc(self.trigger)}) — {self.phase}, "
-                 f"{human_duration(time.monotonic() - self.started)}"]
-        if self.phase == "collecting":
-            for sp in self.sources.values():
-                pct = f" {sp.done_bytes * 100 // sp.total_bytes}%" if sp.total_bytes and sp.phase == "zipping" else ""
-                lines.append(f"• {esc(sp.name)}: {sp.phase}{pct}")
-        elif self.phase == "uploading" and self.upload_total:
-            pct = self.upload_done * 100 // self.upload_size if self.upload_size else 0
-            lines.append(f"📤 {self.upload_index}/{self.upload_total}: {esc(self.upload_name)} "
-                         f"({human_size(self.upload_size)}) {pct}%")
+    def render(self, html: bool = True) -> str:
+        """Live status of the run — HTML for Telegram, plain text for the status file."""
+        e = esc if html else str
+        title = f"<b>Run #{self.run_id}</b>" if html else f"Run #{self.run_id}"
+        lines = [f"⏳ {title} ({e(self.trigger)}) — {self.phase}, {human_duration(time.monotonic() - self.started)}"]
+        lines += [f"• {e(sp.line())}" for sp in self.sources.values()]
+        if self.upload_total and self.upload_name:
+            lines.append(f"📤 {self.upload_index}/{self.upload_total}: {e(self.upload_name)} " +
+                         progress_text(self.upload_done, self.upload_size, time.monotonic() - self.upload_started))
         return "\n".join(lines)
 
 
@@ -160,8 +188,20 @@ class Engine:
         for r in results:
             log.info("  source %s skipped: %s", r.source_name, r.message)
 
+        live_report = None
+        tick = 6.0
+        if on_progress is None and self.sender is not None:
+            # Scheduled / one-time run: a live progress message in the Reports topic, edited into the report.
+            try:
+                live_report = await self.sender.send_text(prog.render(), self.sender.topic_title("reports", "Reports"))
+            except Exception:  # noqa: BLE001
+                log.warning("couldn't post the live progress message", exc_info=True)
+            if live_report is not None:
+                async def on_progress(text: str, _msg=live_report) -> None:
+                    await self.sender.edit_text(_msg, text)
+                tick = 20.0  # gentle on Telegram's edit limits in groups
         stop_ticker = asyncio.Event()
-        ticker = asyncio.create_task(self._ticker(prog, on_progress, stop_ticker)) if on_progress else None
+        ticker = asyncio.create_task(self._ticker(prog, on_progress, stop_ticker, tick)) if on_progress else None
         pending: dict[int, _Pending] = {}
         tasks: dict[int, asyncio.Task] = {}
         archive_note = ""
@@ -236,7 +276,7 @@ class Engine:
             log.info("result %s: %s%s%s", res.source_name, res.status,
                      f" — {res.message}" if res.message else "",
                      "".join(f"\n    · {w}" for w in res.warnings))
-        await self._publish_report(status, report)
+        await self._publish_report(status, report, posted=live_report is not None)
         if on_progress:
             try:
                 await on_progress(report)
@@ -294,7 +334,7 @@ class Engine:
                 cls = get_type(src.type)
                 plugin = cls(src, ctx)
                 pending[src.id] = _Pending(plugin)
-                sp.phase = "collecting"
+                sp.begin("collecting")
                 artifacts = await plugin.collect()
                 log.info("collected %d item(s) in %s: %s", len(artifacts), human_duration(time.time() - res.started),
                          ", ".join(f"{a.label or src.name} ({len(a.entries)} file(s), {human_size(a.total_size)})"
@@ -306,21 +346,21 @@ class Engine:
                     res.warnings.extend(art.warnings)
                     for p in art.cleanup:  # raw downloads are no longer needed once zipped
                         Path(p).unlink(missing_ok=True)
-                sp.phase = "ready"
+                sp.begin("ready")
                 if not artifacts and ctx.notes:
                     res.status, res.message = SKIPPED, "; ".join(ctx.notes)
-                    sp.phase = "nothing new"
+                    sp.begin("nothing new")
                 else:
                     res.warnings.extend(f"note: {n}" for n in ctx.notes)
             except SourceError as e:
                 log.error("FAILED: %s", e)
                 log.debug("details", exc_info=True)
                 res.status, res.message = FAILED, str(e)
-                sp.phase = "failed"
+                sp.begin("failed")
             except Exception as e:  # noqa: BLE001 - one source must never break the run
                 log.exception("FAILED with an unexpected error")
                 res.status, res.message = FAILED, short_error(e)
-                sp.phase = "failed"
+                sp.begin("failed")
             res.warnings.extend(ctx.warnings)
             res.finished = time.time()
         return res
@@ -339,7 +379,6 @@ class Engine:
             "level": int(self.store.get_setting("compression_level") or 6),
             "skip_unreadable": bool(art.meta.get("skip_unreadable")),
         }
-        sp.done_bytes, sp.total_bytes = 0, art.total_size
 
         def progress(n: int) -> None:
             sp.done_bytes = n
@@ -356,7 +395,7 @@ class Engine:
             if not self.archive.enabled:
                 raise SourceError("'Store as: copy' needs an archive location")
             dirname = file_name[: -len(".zip")]
-            sp.phase = "copying → archive"
+            sp.begin("copying → archive", art.total_size)
             pf.file_name, pf.send_telegram = dirname, False
             t0 = time.monotonic()
             log.info("copying %d file(s), %s, to archive %s/%s", len(art.entries), human_size(art.total_size),
@@ -375,7 +414,7 @@ class Engine:
             if not self.archive.enabled:
                 raise SourceError("'Send to Telegram' is off and no archive location is set — "
                                   "this backup would go nowhere")
-            sp.phase = "zipping → archive"
+            sp.begin("zipping → archive", art.total_size)
             t0 = time.monotonic()
             log.info("zipping %s (%s) straight into archive %s", file_name, human_size(art.total_size), folder)
             pf.archive_rel, pf.size, warnings = await self.archive.write_direct(
@@ -389,7 +428,7 @@ class Engine:
         if free < MIN_FREE_BYTES:
             raise SourceError(f"staging disk almost full ({human_size(free)} free in {self.cfg.staging_dir})")
         out = ctx.workdir / "zip" / file_name
-        sp.phase = "zipping"
+        sp.begin("zipping", art.total_size)
         t0 = time.monotonic()
         log.info("zipping %s (%d file(s), %s)%s", file_name, len(art.entries), human_size(art.total_size),
                  ", encrypted" if zip_opts["password"] else ", NOT encrypted (no zip password set)")
@@ -404,10 +443,10 @@ class Engine:
         log.info("zipped %s: %s → %s in %s (%s)", file_name, human_size(art.total_size), human_size(pf.size),
                  human_duration(time.monotonic() - t0), _speed(art.total_size, time.monotonic() - t0))
         if self.archive.enabled:
-            sp.phase = "archiving"
+            sp.begin("archiving", pf.size)
             t0 = time.monotonic()
             try:
-                pf.archive_rel = await self.archive.store_file(out, folder, file_name)
+                pf.archive_rel = await self.archive.store_file(out, folder, file_name, progress)
                 log.info("archived %s in %s (%s)", pf.archive_rel, human_duration(time.monotonic() - t0),
                          _speed(pf.size, time.monotonic() - t0))
             except Exception as e:  # noqa: BLE001
@@ -430,6 +469,7 @@ class Engine:
                  ", ".join(f"{f.file_name} ({human_size(f.size)})" for f in files))
         for i, pf in enumerate(files, start=1):
             prog.upload_index, prog.upload_name, prog.upload_size, prog.upload_done = i, pf.file_name, pf.size, 0
+            prog.upload_started = time.monotonic()
             await self._upload_one(pf, now, retries, prog)
 
     async def _upload_one(self, pf: PackagedFile, now: jdatetime.datetime, retries: int,
@@ -582,11 +622,13 @@ class Engine:
             text = text[:3990] + "\n…"
         return status, text
 
-    async def _publish_report(self, status: str, report: str) -> None:
+    async def _publish_report(self, status: str, report: str, posted: bool = False) -> None:
+        """Report to the Reports topic (unless the live progress message already became the report)
+        and DM the admins when something isn't OK."""
         if self.sender is None:
             return
         try:
-            if status != OK or self.store.get_setting("report_on_success"):
+            if not posted and (status != OK or self.store.get_setting("report_on_success")):
                 await self.sender.send_text(report, self.sender.topic_title("reports", "Reports"))
         except Exception:  # noqa: BLE001
             log.exception("couldn't post the report to the group")
@@ -602,7 +644,8 @@ class Engine:
         d["local_path"] = str(f.local_path) if f.local_path else None
         return d
 
-    async def _ticker(self, prog: RunProgress, cb: ProgressCallback, stop: asyncio.Event) -> None:
+    async def _ticker(self, prog: RunProgress, cb: ProgressCallback, stop: asyncio.Event,
+                      interval: float = 6.0) -> None:
         last = ""
         while not stop.is_set():
             text = prog.render()
@@ -613,7 +656,7 @@ class Engine:
                 except Exception:  # noqa: BLE001
                     log.debug("progress update failed", exc_info=True)
             try:
-                await asyncio.wait_for(stop.wait(), timeout=6)
+                await asyncio.wait_for(stop.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass
 

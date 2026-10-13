@@ -20,4 +20,4 @@ client also receives the admin panel's messages, so there is only one connection
 | `BotApp.__init__` | Creates client, sender, engine, scheduler, panel. |
 | `BotApp.admin_ids` | Owners from `.env` ∪ admins added in the bot. |
 | `BotApp.is_admin` | Gate for every panel action. |
-| `BotApp.run` | Logs in, sets the command menu, cleans up after a crash, registers handlers, starts the scheduler, runs until disconnected. |
+| `BotApp.run` | Logs in, sets the command menu, cleans up after a crash, registers handlers, starts the scheduler and the [status file](../status.md) writer, runs until disconnected. |

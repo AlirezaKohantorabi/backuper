@@ -9,6 +9,22 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.6.0] — 2026-10-13
+
+### Added
+- **Live status file** in the archive: `E:\Backuper\_backuper-status.txt` (and `data/status.txt`), refreshed
+  every ~20 s during runs — every source's step with %, size done, speed and time left, the upload in progress,
+  the last runs and the next scheduled ones. Works in archive-only mode. `backuper status` prints it.
+- **Live progress message** in the 📊 Reports topic for scheduled and one-time runs (when Telegram works),
+  edited every ~20 s and turned into the final report at the end (no duplicate report message).
+- Progress everywhere now shows %, size done/total, speed and time left; archiving shows progress too; all
+  sources are listed (✓ ready, ✗ failed, ⏭ nothing new) also while uploading.
+
+### Verified
+- Folder copies with paths longer than 260 characters work (the bot copies over SMB/server-side, not through
+  Explorer's limit): Edari's longest path, 302 characters in the archive, copied fine.
+- MikroTik Factory and DC: backups work after the router user was rebuilt.
+
 ## [1.5.0] — 2026-10-13
 
 ### Added

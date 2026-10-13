@@ -17,6 +17,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `backuper check` | Config, staging space, timezone/Jalali date, owners, zip password, archive write test. |
 | `backuper list` | Sources with type and summary. |
 | `backuper log [RUN] [--tail N]` | A run's detailed log (default: the newest run). |
+| `backuper status` | What's running right now (live progress per source), the last and the next runs — the same text as `E:\Backuper\_backuper-status.txt`. |
 | `backuper import FILE.yaml [--dry-run]` | Bulk-load settings, groups, credentials and sources (upsert by name). |
 | `backuper export [FILE]` | Current configuration as YAML, **without** passwords. |
 | `backuper credential NAME [-u USER]` | Create/update a credential; the password is typed hidden. |
@@ -32,7 +33,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `open_store` | Opens the database with the `SECRET_KEY` box. |
 | `cmd_gen_key` | `gen-key`. |
 | `cmd_serve` | `serve` — chooses bot mode or archive-only mode. |
-| `_serve_archive_only` | Archive-only mode: engine without a sender + scheduler, forever. |
+| `_serve_archive_only` | Archive-only mode: engine without a sender + scheduler + the [status file](status.md) writer, forever. |
 | `cmd_run` | `run` — connects Telegram only if configured. |
 | `cmd_test` | `test` — calls each plugin's `test()` with a 3-minute limit. |
 | `cmd_check` | `check`. |
@@ -42,4 +43,5 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `cmd_set` | `set`. |
 | `cmd_list` | `list`. |
 | `cmd_log` | `log` — prints `data/logs/runs/run-<id>.log`. |
+| `cmd_status` | `status` — prints `data/status.txt` and warns if it's old (service not running). |
 | `main` | Argument parsing; prints `ConfigError` nicely and exits 2. |

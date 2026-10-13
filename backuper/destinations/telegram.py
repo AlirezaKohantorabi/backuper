@@ -117,13 +117,21 @@ class TelegramSender:
             self.forget_topic(title)
             return await send(await self.topic_id(title))
 
-    async def send_text(self, text: str, topic: str | None = None) -> None:
+    async def send_text(self, text: str, topic: str | None = None):
+        """Send a message into a topic; returns the message (so it can be edited later)."""
         peer = await self.chat()
 
         async def send(tid):
             return await self.client.send_message(peer, text, parse_mode="html", reply_to=tid,
                                                   link_preview=False)
-        await self._with_topic(topic, send)
+        return await self._with_topic(topic, send)
+
+    async def edit_text(self, message, text: str) -> None:
+        """Edit a message sent with send_text (live run progress)."""
+        try:
+            await self.client.edit_message(message, text, parse_mode="html", link_preview=False)
+        except errors.MessageNotModifiedError:
+            pass
 
     async def notify_admins(self, text: str) -> None:
         for uid in self.admin_ids():

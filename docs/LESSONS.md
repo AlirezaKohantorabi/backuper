@@ -90,6 +90,19 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 - **my.telegram.org** refused to create the API app ("ERROR") for an old account on a normal connection —
   the one external dependency we couldn't solve from our side → archive-only mode.
 
+- **Routers' own clocks** were days/hours wrong (Factory 5 days behind, DC 16 hours): their NTP clients sat
+  at "waiting" because the routers can't resolve DNS names → use NTP server IP addresses.
+- **Router login "Permission denied"** on two routers was fixed by deleting and recreating the user and group
+  with the same password (a typo or a character the RouterOS terminal treats specially, like `?`).
+- **Long paths:** Windows Explorer stops at 260 characters, SMB doesn't — the bot copied a 302-character path
+  without problems, but restoring such files by hand needs `robocopy` (or long paths enabled).
+- **A folder can look smaller to the bot than to an admin:** Finance showed 13 GB to the bot vs 167 GB to the
+  admin — with access-based enumeration, folders an account can't read are simply invisible (no error).
+  Grant rights with `icacls … /T` so they reach sub-folders whose inheritance is disabled.
+- **my.telegram.org "ERROR":** researched GitHub/forums (Oct 2026). No official cause or fix; Telegram's
+  maintainers say they can't influence it. Reported to work for some: random letters/digits for app title and
+  short name, re-submitting many times, mobile data instead of Wi-Fi, a phone browser, no ad-blockers/VPN.
+
 ## 5. Measurements (first site)
 
 | What | Result |
@@ -142,6 +155,5 @@ icacls (Get-SmbShare -Name 'Edari').Path /grant "${bot}:(OI)(CI)RX"
 ## Open items at the time of writing (2026-10-13)
 
 - Telegram api_id (my.telegram.org "ERROR").
-- Factory and DC routers refuse the bot's login — user being rebuilt.
 - Hamrahan System SQL logins (vendor).
 - Domain controller time source: Group Policy + Hyper-V time provider (see §4).

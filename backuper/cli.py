@@ -7,6 +7,7 @@ import asyncio
 import logging
 import shutil
 import sys
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -77,13 +78,17 @@ async def _serve_archive_only(cfg: AppConfig, store: Store) -> None:
     log.warning("BOT_TOKEN/API_ID/API_HASH not all set — running ARCHIVE-ONLY: schedules run and zips go to "
                 "the archive, but nothing is uploaded and there is no admin panel. Fill .env and restart to "
                 "enable Telegram.")
+    from backuper.status import StatusWriter
+
     engine = Engine(cfg, store, None)
     engine.startup_cleanup()
     scheduler = Scheduler(engine, store, cfg.timezone)
     scheduler.start()
+    status = asyncio.create_task(StatusWriter(cfg, store, engine, scheduler).run())
     try:
         await asyncio.Event().wait()
     finally:
+        status.cancel()
         scheduler.shutdown()
 
 
@@ -349,6 +354,20 @@ def cmd_log(args) -> int:
     return 0
 
 
+def cmd_status(args) -> int:
+    """Print the live status file the service writes (what's running right now, last and next runs)."""
+    cfg = load_config(args.env, require_telegram=False)
+    path = cfg.data_dir / "status.txt"
+    if not path.exists():
+        print("No status yet — is the service running? (sudo systemctl status backuper)", file=sys.stderr)
+        return 1
+    age = time.time() - path.stat().st_mtime
+    print(path.read_text(encoding="utf-8"))
+    if age > 15 * 60:
+        print(f"⚠️ This file is {int(age // 60)} minutes old — the service may not be running.", file=sys.stderr)
+    return 0
+
+
 def cmd_list(args) -> int:
     from backuper.sources import REGISTRY
 
@@ -373,6 +392,7 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("source", nargs="*")
     sub.add_parser("check", help="check configuration and archive access")
     sub.add_parser("list", help="list sources")
+    sub.add_parser("status", help="what's running right now (live progress), last and next runs")
     lg = sub.add_parser("log", help="show a run's detailed log (default: newest run)")
     lg.add_argument("run", nargs="?", type=int)
     lg.add_argument("--tail", type=int, default=0, help="only the last N lines")
@@ -391,7 +411,7 @@ def main(argv: list[str] | None = None) -> None:
 
     handlers = {"serve": cmd_serve, "gen-key": cmd_gen_key, "run": cmd_run, "test": cmd_test, "check": cmd_check,
                 "list": cmd_list, "import": cmd_import, "export": cmd_export, "credential": cmd_credential,
-                "set": cmd_set, "log": cmd_log, None: cmd_serve}
+                "set": cmd_set, "log": cmd_log, "status": cmd_status, None: cmd_serve}
     try:
         sys.exit(handlers[args.cmd](args))
     except ConfigError as e:

@@ -220,6 +220,19 @@ class Archive:
         """Copy a finished zip into the archive. Returns its relative path."""
         return await asyncio.to_thread(self._store_sync, local, folder, name, progress)
 
+    def write_status(self, name: str, text: str) -> None:
+        """Write a small text file in the archive root (the live status file). Blocking; no-op without archive."""
+        if not self.enabled:
+            return
+        data = ("\ufeff" + text).encode("utf-8")  # BOM: Notepad shows Persian names correctly
+        if self.is_smb:
+            smb = self._smb()
+            smb.write_bytes(unc_join(self._root_unc(), name), data)
+        else:
+            root = Path(self.root)
+            root.mkdir(parents=True, exist_ok=True)
+            (root / name).write_bytes(data)
+
     def _fetch_sync(self, rel: str, local: Path) -> None:
         folder, name = rel.split("/", 1)
         local.parent.mkdir(parents=True, exist_ok=True)

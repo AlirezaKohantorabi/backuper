@@ -38,6 +38,7 @@ and credential from ⚙️ Settings every time, so changes apply without a resta
 | `Archive._copy_tree_sync` / `Archive.copy_tree` | Plain folder copy (see table above). |
 | `Archive._delete_sync` / `Archive.delete` | Delete a zip or a copied folder (no error if already gone). |
 | `Archive._fetch_sync` / `Archive.fetch` | Download a zip back (📤 Resend). |
+| `Archive.write_status` | Writes the live status file (`_backuper-status.txt`) in the archive root (UTF-8 with BOM). |
 | `Archive._list_date_folders_sync` | Date folders, oldest first. |
 | `Archive._prune_sync` / `Archive.prune` | Date-folder retention. |
 | `Archive._test_sync` / `Archive.test` | Write+delete a probe file, report free space and folder count. |

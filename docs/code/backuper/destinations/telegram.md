@@ -32,7 +32,8 @@ source, or none) that are created on demand and cached.
 | `TelegramSender.forget_topic` | Drop a cached topic (it was deleted). |
 | `TelegramSender._create_topic` | Creates a forum topic; returns its id or `None` (then main chat). |
 | `TelegramSender._with_topic` | Sends into a topic; recreates it once if it was deleted. |
-| `TelegramSender.send_text` | Report/text message into a topic. |
+| `TelegramSender.send_text` | Report/text message into a topic; returns the message so it can be edited. |
+| `TelegramSender.edit_text` | Edits such a message (the live progress message of scheduled runs). |
 | `TelegramSender.notify_admins` | DM every admin (they must have pressed /start once). |
 | `TelegramSender.upload_file` | Uploads a zip, split into parts if needed, with a caption per part. |
 | `fast_upload` | The pipelined MTProto upload of one byte range (see above). |
