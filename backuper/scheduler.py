@@ -12,16 +12,18 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 from backuper.db import Store
 from backuper.engine import Engine
 from backuper.fields import describe_schedule
 
 log = logging.getLogger(__name__)
+ONE_OFF_GRACE = timedelta(hours=1)  # a one-time run missed while the service was down still runs within this
 
 
 @dataclass
@@ -79,6 +81,15 @@ class Scheduler:
                 log.error("Ignoring invalid cron %r for %s", job.cron, job.label)
                 continue
             self._sched.add_job(self._fire, trigger, args=[job.key], id=job.key, replace_existing=True)
+        now = datetime.now(self.tz)
+        for o in self.store.list_one_offs():
+            if o.run_at < now - ONE_OFF_GRACE:
+                self.store.set_one_off(o.id, "missed")
+                log.warning("One-time run %r at %s was missed (service was down)", o.label, o.run_at)
+                continue
+            when = max(o.run_at, now + timedelta(seconds=5))
+            self._sched.add_job(self._fire_once, DateTrigger(run_date=when, timezone=self.tz), args=[o.id],
+                                id=f"once:{o.id}", replace_existing=True, misfire_grace_time=int(ONE_OFF_GRACE.total_seconds()))
         log.info("Schedule loaded:\n%s", self.describe() or "nothing scheduled")
 
     async def _fire(self, key: str) -> None:
@@ -87,11 +98,29 @@ class Scheduler:
             await self.engine.run(job.source_ids, trigger=f"{job.label} · {describe_schedule(job.cron)}",
                                   upload_from=job.upload_at)
 
+    async def _fire_once(self, oid: int) -> None:
+        o = self.store.get_one_off(oid)
+        if o is None or o.status != "pending":
+            return
+        self.store.set_one_off(oid, "running")
+        ids = [i for i in o.source_ids if self.store.get_source(i)]
+        try:
+            run_id = await self.engine.run(ids, trigger=f"one-time · {o.label}")  # uploads right away
+            self.store.set_one_off(oid, "done", run_id)
+        except Exception:
+            log.exception("one-time run %s failed", oid)
+            self.store.set_one_off(oid, "failed")
+
     def next_runs(self) -> list[tuple[datetime, str, int]]:
         """[(next time, label, number of sources)], soonest first."""
         plan = self.plan()
+        once = {f"once:{o.id}": o for o in self.store.list_one_offs()}
         out = []
         for job in self._sched.get_jobs():
+            if job.id in once:
+                o = once[job.id]
+                out.append((o.run_at, f"⏱ once: {o.label}", len(o.source_ids)))
+                continue
             p = plan.get(job.id)
             if p is None:
                 continue

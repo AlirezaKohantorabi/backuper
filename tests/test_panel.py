@@ -200,7 +200,26 @@ async def test_full_admin_flow(panel, store):
     await press(panel, f"gmt:{group.id}:{src.id}")
     assert store.get_source(src.id).config["group"] == "Daily"
     ev = await press(panel, f"gv:{group.id}")
-    assert "Hamrahan-DB" in ev.text
+    assert f"sv:{src.id}" in all_buttons(ev.buttons)         # members are buttons to their pages
+    ev = await press(panel, f"sv:{src.id}")
+    assert "Group <b>Daily</b>" in ev.text
+    # move it out of the group from its own page, then back
+    await press(panel, f"sg:{src.id}")
+    await press(panel, f"sgs:{src.id}:0")
+    assert store.get_source(src.id).config["group"] == ""
+    await press(panel, f"sgs:{src.id}:{group.id}")
+    assert store.get_source(src.id).config["group"] == "Daily"
+    # one-time run: bad input is refused, a good one is stored and can be cancelled
+    await press(panel, f"so:{src.id}")
+    bad = await say(panel, "yesterday")
+    assert "use 14:30" in bad.responses[0]
+    await say(panel, "+2h")
+    once = store.list_one_offs()
+    assert len(once) == 1 and once[0].source_ids == [src.id]
+    ev = await press(panel, "sch")
+    assert "One-time runs" in ev.text and f"oc:{once[0].id}" in all_buttons(ev.buttons)
+    await press(panel, f"oc:{once[0].id}")
+    assert not store.list_one_offs()
     await press(panel, f"ge:{group.id}:schedule")
     await say(panel, "07:30")
     assert store.get_group(group.id).schedule == "30 7 * * *"

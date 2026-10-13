@@ -49,6 +49,9 @@ GROUP_FIELDS = [
                "(e.g. back up at 06:00, upload from 08:00). Empty = upload as soon as the backups are ready. "
                "▶️ Run now always uploads right away."),
 ]
+ONCE_FIELD = Field("when", "When", TEXT, example="14:30   or   1405/07/25 22:00   or   +2h",
+                   help="14:30 = the next time it's 14:30 · a Jalali date and time · +30m / +2h from now. "
+                        "Runs once and uploads as soon as it's done.")
 ADMIN_FIELDS = [
     Field("user_id", "Telegram user ID", INT, min=1, help="They can get it by sending /id to this bot."),
     Field("name", "Name", TEXT, required=False, default=""),
@@ -190,6 +193,11 @@ class Panel:
             "sdy": lambda e, a: self.delete_source(e, int(a)),
             "sdup": lambda e, a: self.duplicate_source(e, int(a)),
             "sk": lambda e, a: self.forget_keys(e, int(a)),
+            "sg": lambda e, a: self.choose_source_group(e, int(a)),
+            "sgs": self.set_source_group,
+            "so": lambda e, a: self.schedule_once_source(e, int(a)),
+            "go": lambda e, a: self.schedule_once_group(e, int(a)),
+            "oc": lambda e, a: self.cancel_once(e, int(a)),
             "sr": lambda e, a: self.run_source(e, int(a)),
             "st": lambda e, a: self.test_source(e, int(a)),
             "cl": lambda e, _: self.show_credentials(e),
@@ -304,7 +312,8 @@ class Panel:
         if cls is None:
             return f"❓ <b>{esc(src.name)}</b> — unknown type {esc(src.type)}"
         lines = [f"{CAT_ICON.get(cls.category, '📦')} <b>{esc(src.name)}</b> — "
-                 f"{'✅ enabled' if src.enabled else '⏸ disabled'}", f"<i>{esc(cls.title)}</i>", ""]
+                 f"{'✅ enabled' if src.enabled else '⏸ disabled'}", f"<i>{esc(cls.title)}</i>", "",
+                 self._when_text(src), ""]
         for f in cls.all_fields():
             if f.visible(src.config) and f.key in src.config and src.config[f.key] not in ("", None, []):
                 lines.append(f"• {esc(f.label)}: <code>{esc(f.display(src.config[f.key]))}</code>")
@@ -323,8 +332,11 @@ class Panel:
         if src is None:
             await self.show_sources(event)
             return
+        group = src.config.get("group") or ""
         rows = [
             [Button.inline("▶️ Run now", f"sr:{sid}".encode()), Button.inline("🧪 Test", f"st:{sid}".encode())],
+            [Button.inline(f"🗂 Group: {group or 'none'}"[:40], f"sg:{sid}".encode()),
+             Button.inline("⏱ Run once at…", f"so:{sid}".encode())],
             [Button.inline("✏️ Edit", f"se:{sid}".encode()),
              Button.inline("⏸ Disable" if src.enabled else "▶️ Enable", f"sx:{sid}".encode())],
             [Button.inline("📄 Duplicate", f"sdup:{sid}".encode()), Button.inline("🗑 Delete", f"sd:{sid}".encode())],
@@ -416,6 +428,79 @@ class Panel:
             self.store.set_source_state(sid, src.state)
             await event.answer("Pinned key forgotten — the next connection pins the new one.", alert=True)
             await self.show_source(event, sid)
+
+    def _when_text(self, src) -> str:
+        """One line telling when a source runs: its group, its own time, or manual only (+ one-time runs)."""
+        group = self.store.get_group_by_name(src.config.get("group") or "") if src.config.get("group") else None
+        if group:
+            up = f", uploads from {group.upload_at}" if group.upload_at else ""
+            text = (f"🗂 Group <b>{esc(group.name)}</b> — starts {esc(describe_schedule(group.schedule))}{esc(up)}"
+                    + ("" if group.enabled else " (group disabled)"))
+        elif src.config.get("schedule"):
+            text = f"⏰ Own time: {esc(describe_schedule(src.config['schedule']))}"
+        else:
+            text = "▶️ Manual only (no group, no own time)"
+        for o in self.store.list_one_offs():
+            if src.id in o.source_ids:
+                when = jalali.to_jalali(o.run_at.astimezone(self.app.cfg.timezone))
+                text += f"\n⏱ Once: {jalali.pretty(when)}"
+        return text
+
+    async def choose_source_group(self, event, sid: int) -> None:
+        src = self.store.get_source(sid)
+        if src is None:
+            return
+        current = (src.config.get("group") or "").lower()
+        rows = [[Button.inline(("✅ " if g.name.lower() == current else "🗂 ") + g.name, f"sgs:{sid}:{g.id}".encode())]
+                for g in self.store.list_groups()]
+        rows.append([Button.inline(("✅ " if not current else "") + "🚫 No group", f"sgs:{sid}:0".encode())])
+        rows.append([Button.inline("⬅️ Back", f"sv:{sid}".encode())])
+        await self._respond(event, f"🗂 Which group should <b>{esc(src.name)}</b> be in?\n\n"
+                                   "No group = it runs at its own time (✏️ Edit → Own time), or only manually.", rows)
+
+    async def set_source_group(self, event, arg: str) -> None:
+        sid_s, gid_s = arg.split(":")
+        g = self.store.get_group(int(gid_s)) if gid_s != "0" else None
+        self.store.set_source_group(int(sid_s), g.name if g else "")
+        self.app.scheduler.reload()
+        await self.show_source(event, int(sid_s))
+
+    async def schedule_once_source(self, event, sid: int) -> None:
+        src = self.store.get_source(sid)
+        if src:
+            await self.start_form(event, FormState("once", f"⏱ Run {src.name} once", [ONCE_FIELD],
+                                                   target=("source", sid)))
+
+    async def schedule_once_group(self, event, gid: int) -> None:
+        g = self.store.get_group(gid)
+        if g:
+            await self.start_form(event, FormState("once", f"⏱ Run group {g.name} once", [ONCE_FIELD],
+                                                   target=("group", gid)))
+
+    async def cancel_once(self, event, oid: int) -> None:
+        o = self.store.get_one_off(oid)
+        if o and o.status == "pending":
+            self.store.set_one_off(oid, "cancelled")
+            self.app.scheduler.reload()
+        await self.show_schedule(event)
+
+    def _create_once(self, state: FormState, when_iso: str, uid: int) -> str:
+        from datetime import datetime
+
+        kind, ident = state.target
+        if kind == "source":
+            src = self.store.get_source(ident)
+            label, ids = src.name, [src.id]
+        else:
+            g = self.store.get_group(ident)
+            label, ids = f"group {g.name}", [m.id for m in self.store.group_members(g.name, enabled_only=True)]
+            if not ids:
+                raise FieldError(f"Group {g.name} has no enabled sources")
+        when = datetime.fromisoformat(when_iso)
+        self.store.add_one_off(label, ids, when, uid)
+        self.app.scheduler.reload()
+        j = jalali.to_jalali(when.astimezone(self.app.cfg.timezone))
+        return f"⏱ <b>{esc(label)}</b> will run once at <b>{jalali.pretty(j)}</b> and upload as soon as it's done."
 
     async def run_source(self, event, sid: int) -> None:
         src = self.store.get_source(sid)
@@ -593,9 +678,18 @@ class Panel:
             for when, label, n in nxt[:6]:
                 j = jalali.to_jalali(when.astimezone(tz))
                 lines.append(f"• {jalali.pretty(j)} — {esc(label)}, {n} source(s)")
+        once = self.store.list_one_offs()
+        rows = []
+        if once:
+            lines += ["", "One-time runs:"]
+            for o in once:
+                j = jalali.to_jalali(o.run_at.astimezone(tz))
+                lines.append(f"• ⏱ {jalali.pretty(j)} — {esc(o.label)}")
+                rows.append([Button.inline(f"✖️ Cancel {jalali.pretty(j)} {o.label}"[:60], f"oc:{o.id}".encode())])
         lines += ["", "<i>Each run uploads its files smallest first, one at a time; runs that overlap "
-                  "wait for each other's uploads.</i>"]
-        await self._respond(event, "\n".join(lines), [[Button.inline("🗂 Groups", b"gl")], BACK_MAIN])
+                  "wait for each other's uploads. Manual and one-time runs upload as soon as they're done.</i>"]
+        rows += [[Button.inline("🗂 Groups", b"gl")], BACK_MAIN]
+        await self._respond(event, "\n".join(lines), rows)
 
     # ======================================================================
     # groups
@@ -621,14 +715,20 @@ class Panel:
         lines = [f"🗂 <b>{esc(g.name)}</b> — {'✅ enabled' if g.enabled else '⏸ disabled'}",
                  f"⏰ starts {esc(describe_schedule(g.schedule))}",
                  f"📤 uploads {'from ' + g.upload_at if g.upload_at else 'as soon as backups are ready'}", ""]
-        if members:
-            lines.append(f"Sources ({len(members)}):")
-            lines += [f"• {'' if m.enabled else '⏸ '}{esc(m.name)}" for m in members]
-        else:
-            lines.append("No sources yet — add some with 📦 Sources in group.")
-        rows = [
+        lines.append(f"Sources ({len(members)}) — tap one to open it:" if members else
+                     "No sources yet — add some with 📦 Sources in group.")
+        rows, row = [], []
+        for m in members:
+            row.append(Button.inline(f"{'' if m.enabled else '⏸ '}{m.name}"[:30], f"sv:{m.id}".encode()))
+            if len(row) == 3:
+                rows.append(row)
+                row = []
+        if row:
+            rows.append(row)
+        rows += [
             [Button.inline("▶️ Run group now", f"gr:{gid}".encode()),
-             Button.inline("📦 Sources in group", f"gm:{gid}".encode())],
+             Button.inline("⏱ Run once at…", f"go:{gid}".encode())],
+            [Button.inline("📦 Add / remove sources", f"gm:{gid}".encode())],
             [Button.inline("⏰ Start time", f"ge:{gid}:schedule".encode()),
              Button.inline("📤 Upload from", f"ge:{gid}:upload_at".encode())],
             [Button.inline("🏷 Rename", f"ge:{gid}:name".encode())],
@@ -864,6 +964,11 @@ class Panel:
             self._validate_unique(state, f, value)
             if f.kind == CREDENTIAL and value and not self.store.get_credential_by_name(value):
                 raise FieldError(f"No credential named '{value}' — pick one from the buttons")
+            if state.kind == "once" and f.key == "when":
+                try:
+                    value = jalali.parse_when(value, self.app.cfg.timezone).isoformat()
+                except ValueError as e:
+                    raise FieldError(str(e)) from e
             if f.kind == GROUP and value:
                 g = self.store.get_group_by_name(value)
                 if g is None:
@@ -977,6 +1082,11 @@ class Panel:
                                   upload_at=vals.get("upload_at"))
             self.app.scheduler.reload()
             await self.show_group(event, g.id)
+        elif kind == "once":
+            text = self._create_once(state, vals["when"], uid)
+            back = f"sv:{state.target[1]}" if state.target[0] == "source" else f"gv:{state.target[1]}"
+            await self._respond(event, text, [[Button.inline("⬅️ Back", back.encode()),
+                                                Button.inline("⏰ Schedule", b"sch")]])
         elif kind == "admin_add":
             self.store.add_admin(vals["user_id"], vals.get("name", ""), uid)
             await self.show_admins(event)

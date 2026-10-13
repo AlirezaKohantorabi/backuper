@@ -8,14 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ntpath
 import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO, TypeVar
 
+import smbclient
+
 from backuper import jalali
 from backuper.db import Store
+from backuper.fields import unc_server
+from backuper.models import Artifact
 from backuper.transport.smb import SMB, SMBError
 from backuper.transport.smb import join as unc_join
 from backuper.util import human_size
@@ -110,15 +115,102 @@ class Archive:
         return await asyncio.to_thread(self._write_direct_sync, folder, name, write)
 
     def _delete_sync(self, rel: str) -> bool:
+        """Delete a zip or a copied folder. False if it's already gone (e.g. its date folder was pruned)."""
         folder, name = rel.split("/", 1)
         try:
             if self.is_smb:
-                self._smb().remove(unc_join(self._root_unc(), folder, name))
+                smb = self._smb()
+                path = unc_join(self._root_unc(), folder, name)
+                if smbclient.path.isdir(path, **smb._kw()):  # noqa: SLF001
+                    smb.rmtree(path)
+                else:
+                    smb.remove(path)
             else:
-                (Path(self.root) / folder / name).unlink()
+                p = Path(self.root) / folder / name
+                shutil.rmtree(p) if p.is_dir() else p.unlink()
             return True
         except (FileNotFoundError, SMBError):
-            return False  # already gone (e.g. its date folder was pruned)
+            return False
+
+    def _copy_tree_sync(self, art: Artifact, folder: str, dirname: str, skip_unreadable: bool,
+                        progress: Callable[[int], None] | None) -> tuple[str, int, list[str]]:
+        """Copy every entry as a plain file into <folder>/<dirname>/ (written as <dirname>.partial
+        and renamed at the end, so a half-finished copy is never mistaken for a backup)."""
+        warnings: list[str] = []
+        done = 0
+        if self.is_smb:
+            smb = self._smb()
+            final = unc_join(self._root_unc(), folder, dirname)
+            tmp = final + ".partial"
+            host = unc_server(self._root_unc()).lower()
+            if smb.exists(tmp):
+                smb.rmtree(tmp)
+            smb.makedirs(tmp)
+            made = {tmp.lower()}
+            try:
+                for e in art.entries:
+                    dst = unc_join(tmp, *e.arcname.split("/"))
+                    parent = ntpath.dirname(dst)
+                    if parent.lower() not in made:
+                        smb.makedirs(parent)
+                        made.add(parent.lower())
+                    try:
+                        if e.source_path and unc_server(e.source_path).lower() == host:
+                            try:
+                                smb.server_copy(e.source_path, dst)  # data stays inside that server
+                            except SMBError:
+                                smb.copy_stream(e.opener, dst)
+                        else:
+                            smb.copy_stream(e.opener, dst)
+                        smb.set_mtime(dst, e.mtime)
+                    except SMBError as ex:
+                        if not skip_unreadable:
+                            raise
+                        warnings.append(f"skipped {e.arcname}: {ex.__class__.__name__} {ex}")
+                        continue
+                    done += e.size
+                    if progress:
+                        progress(done)
+                if smb.exists(final):
+                    smb.rmtree(final)
+                smb.rename(tmp, final)
+            except BaseException:
+                try:
+                    smb.rmtree(tmp)
+                except SMBError:
+                    pass
+                raise
+        else:
+            final_p = Path(self.root) / folder / dirname
+            tmp_p = final_p.with_name(dirname + ".partial")
+            shutil.rmtree(tmp_p, ignore_errors=True)
+            try:
+                for e in art.entries:
+                    dst_p = tmp_p.joinpath(*e.arcname.split("/"))
+                    dst_p.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        with e.opener() as src, open(dst_p, "wb") as dst:
+                            shutil.copyfileobj(src, dst, 4 * 1024 * 1024)
+                        os.utime(dst_p, (e.mtime, e.mtime))
+                    except OSError as ex:
+                        if not skip_unreadable:
+                            raise
+                        warnings.append(f"skipped {e.arcname}: {ex.__class__.__name__} {ex}")
+                        continue
+                    done += e.size
+                    if progress:
+                        progress(done)
+                shutil.rmtree(final_p, ignore_errors=True)
+                os.replace(tmp_p, final_p)
+            except BaseException:
+                shutil.rmtree(tmp_p, ignore_errors=True)
+                raise
+        return f"{folder}/{dirname}", done, warnings
+
+    async def copy_tree(self, art: Artifact, folder: str, dirname: str, *, skip_unreadable: bool = True,
+                        progress: Callable[[int], None] | None = None) -> tuple[str, int, list[str]]:
+        """Store an artifact as a plain folder instead of a zip. Returns (relative path, bytes copied, warnings)."""
+        return await asyncio.to_thread(self._copy_tree_sync, art, folder, dirname, skip_unreadable, progress)
 
     async def delete(self, rel: str) -> bool:
         return await asyncio.to_thread(self._delete_sync, rel)

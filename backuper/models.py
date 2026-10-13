@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -41,6 +42,18 @@ class Group:
 
 
 @dataclass
+class OneOff:
+    """A one-time scheduled run of some sources (uploads as soon as it's done)."""
+
+    id: int
+    label: str
+    source_ids: list[int]
+    run_at: datetime
+    status: str          # pending | running | done | missed | cancelled
+    run_id: int | None = None
+
+
+@dataclass
 class SourceRecord:
     id: int
     name: str
@@ -59,6 +72,7 @@ class Entry:
     mtime: float
     opener: Callable[[], BinaryIO]
     compress: bool = True
+    source_path: str | None = None  # UNC path of the original (SMB sources) — enables server-side copy
 
     @classmethod
     def from_path(cls, path: Path, arcname: str | None = None, compress: bool | None = None) -> Entry:

@@ -4,7 +4,7 @@ import asyncio
 import ntpath
 from typing import Any
 
-from backuper.fields import BOOL, CREDENTIAL, LIST, UNC, Field
+from backuper.fields import BOOL, CHOICE, CREDENTIAL, LIST, UNC, Field
 from backuper.models import Artifact, Entry, should_compress
 from backuper.sources.base import SourceError, SourceType
 from backuper.util import human_size, safe_filename
@@ -19,6 +19,10 @@ class SMBFolder(SourceType):
     description = ("Zips a whole folder from a Windows share (streamed — no temporary copy). Files that are "
                    "locked by another program are skipped and listed as a warning.")
     fields = [
+        Field("format", "Store as", CHOICE, default="zip", choices=("zip", "copy"),
+              help="zip: one AES-256 encrypted zip (can also go to Telegram). copy: a plain folder in the archive "
+                   "named <Source>_<date>_<time> with the files as they are — easy to browse and restore; archive "
+                   "only, not encrypted. On the same server as the archive the copy happens inside that server."),
         Field("path", "Folder (network path)", UNC, example=r"\\192.168.10.35\D$\Edari",
               help=r"Admin shares like \\server\D$\folder work with an administrator account."),
         Field("credential", "Share credential", CREDENTIAL),
@@ -47,10 +51,13 @@ class SMBFolder(SourceType):
         smb, files = await self._list()
         if not files:
             raise SourceError(f"{self.cfg['path']} is empty (or everything is excluded)")
-        root = safe_filename(ntpath.basename(self.cfg["path"].rstrip("\\")) or self.record.name)
+        fmt = self.cfg.get("format") or "zip"
+        # zip: entries live under the folder's own name; copy: the archive folder already carries the name
+        root = "" if fmt == "copy" else safe_filename(ntpath.basename(self.cfg["path"].rstrip("\\")) or self.record.name) + "/"
         entries = [
-            Entry(arcname=f"{root}/{f.rel.replace(chr(92), '/')}", size=f.size, mtime=f.mtime,
-                  opener=smb.opener(f.path), compress=should_compress(f.name))
+            Entry(arcname=root + f.rel.replace("\\", "/"), size=f.size, mtime=f.mtime,
+                  opener=smb.opener(f.path), compress=should_compress(f.name), source_path=f.path)
             for f in files
         ]
-        return [Artifact(label="", entries=entries, meta={"skip_unreadable": bool(self.cfg.get("skip_locked", True))})]
+        return [Artifact(label="", entries=entries,
+                         meta={"skip_unreadable": bool(self.cfg.get("skip_locked", True)), "format": fmt})]

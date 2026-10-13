@@ -27,6 +27,11 @@ class FakeSource(SourceType):
     gate: asyncio.Event | None = None  # set by tests to hold a source in "collecting"
 
     async def collect(self):
+        if self.cfg.get("copy"):
+            data = b"hello world"
+            return [Artifact(label="", meta={"format": "copy"}, entries=[
+                Entry(arcname=f"sub/f{i}.txt", size=len(data), mtime=1.7e9, opener=lambda: io.BytesIO(data))
+                for i in range(3)])]
         if self.cfg.get("hold") and FakeSource.gate is not None:
             await FakeSource.gate.wait()
         if self.cfg.get("fail"):
@@ -371,3 +376,19 @@ async def test_archive_only_mode_without_telegram(cfg, store, tmp_path):
     item = store.run_items(run_id)[0]
     assert item["status"] == OK and len(list((tmp_path / "arch").rglob("DB_*.zip"))) == 1
     assert not list(cfg.staging_dir.rglob("DB_*.zip"))  # streamed straight into the archive
+
+
+async def test_copy_format_makes_a_plain_dated_folder(cfg, store, tmp_path):
+    arch = tmp_path / "arch"
+    store.set_setting("archive_path", str(arch))
+    store.set_setting("zip_password", "pw")
+    store.create_source("Edari", "fake", {"copy": True, "archive_keep": 1}, set())
+    sender = FakeSender()
+    engine = Engine(cfg, store, sender)
+    run_id = await engine.run(trigger="t")
+    assert store.run_items(run_id)[0]["status"] == OK and not sender.uploads   # never sent to Telegram
+    dirs = [p for p in arch.rglob("Edari_*") if p.is_dir()]
+    assert len(dirs) == 1 and sorted(x.name for x in (dirs[0] / "sub").iterdir()) == ["f0.txt", "f1.txt", "f2.txt"]
+    assert (dirs[0] / "sub" / "f0.txt").read_bytes() == b"hello world"          # plain, not encrypted
+    assert int((dirs[0] / "sub" / "f0.txt").stat().st_mtime) == int(1.7e9)    # original date kept
+    assert not list(arch.rglob("*.partial"))

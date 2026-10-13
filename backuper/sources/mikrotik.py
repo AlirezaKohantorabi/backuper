@@ -9,7 +9,6 @@ from backuper.models import Artifact, Entry
 from backuper.sources.base import SourceError, SourceType
 from backuper.transport import ssh
 
-_KV = re.compile(r"^\s*([\w-]+):\s*(.*?)\s*$")
 # RouterOS prints command errors to stdout and still exits 0
 _ROS_ERROR = re.compile(r"^(failure:|syntax error|bad command name|expected end of command|no such item|"
                         r"input does not match|invalid value|not enough permissions|ambiguous value)",
@@ -26,13 +25,22 @@ async def ros(conn, command: str, timeout: int = 300) -> str:
     return out
 
 
-def parse_print(text: str) -> dict[str, str]:
-    out = {}
-    for line in text.splitlines():
-        m = _KV.match(line)
-        if m:
-            out[m.group(1)] = m.group(2)
-    return out
+async def ros_values(conn, getters: dict[str, str]) -> dict[str, str]:
+    """Read single values with `:put [<get command>]`.
+
+    The formatted `print` output can't be parsed reliably: without a terminal,
+    RouterOS wraps long values one character per line. Each getter runs in its
+    own `:do {} on-error={}` so a missing property (e.g. on RouterOS 6) just
+    comes back empty.
+    """
+    script = "; ".join(f':do {{ :put ("{k}=" . [{cmd}]) }} on-error={{}}' for k, cmd in getters.items())
+    out = await ros(conn, script)
+    values = {}
+    for line in out.splitlines():
+        key, sep, value = line.strip().partition("=")
+        if sep and key in getters:
+            values[key] = value.strip()
+    return values
 
 
 def ros_quote(value: str) -> str:
@@ -77,20 +85,24 @@ class MikroTik(SourceType):
         return conn
 
     async def _info(self, conn) -> dict[str, str]:
-        res = parse_print(await ros(conn, "/system resource print"))
-        ident = parse_print(await ros(conn, "/system identity print"))
-        res["identity"] = ident.get("name", "")
-        return res
+        return await ros_values(conn, {
+            "identity": "/system identity get name",
+            "version": "/system resource get version",
+            "board-name": "/system resource get board-name",
+            "architecture-name": "/system resource get architecture-name",
+            "uptime": "/system resource get uptime",
+            "cpu": "/system resource get cpu",
+            "total-memory": "/system resource get total-memory",
+        })
 
     async def test(self) -> str:
         conn = await self._connect()
         try:
             info = await self._info(conn)
-            clock = parse_print(await ros(conn, "/system clock print"))
-            try:
-                ntp = parse_print(await ros(conn, "/system ntp client print"))
-            except RuntimeError:
-                ntp = {}
+            clock = await ros_values(conn, {"date": "/system clock get date", "time": "/system clock get time",
+                                            "time-zone-name": "/system clock get time-zone-name"})
+            ntp = await ros_values(conn, {"enabled": "/system ntp client get enabled",
+                                          "status": "/system ntp client get status"})  # no status on v6
             sftp = await conn.start_sftp_client()
             sftp.exit()
         finally:

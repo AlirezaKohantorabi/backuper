@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from backuper.crypto import PREFIX, SecretBox
-from backuper.models import Credential, Group, SourceRecord
+from backuper.models import Credential, Group, OneOff, SourceRecord
 from backuper.settings import SETTINGS_BY_KEY
 
 SCHEMA_VERSION = 1
@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS groups (
     upload_at TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS one_offs (
+    id INTEGER PRIMARY KEY,
+    label TEXT NOT NULL,
+    source_ids TEXT NOT NULL,
+    run_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_by INTEGER,
+    run_id INTEGER,
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS admins (
     user_id INTEGER PRIMARY KEY,
@@ -338,6 +348,28 @@ class Store:
     def group_members(self, name: str, enabled_only: bool = False) -> list[SourceRecord]:
         return [s for s in self.list_sources(enabled_only=enabled_only)
                 if (s.config.get("group") or "").lower() == name.lower()]
+
+    # -- one-time runs ------------------------------------------------------------
+    @staticmethod
+    def _oneoff(r: sqlite3.Row) -> OneOff:
+        return OneOff(id=r["id"], label=r["label"], source_ids=json.loads(r["source_ids"]),
+                      run_at=datetime.fromisoformat(r["run_at"]), status=r["status"], run_id=r["run_id"])
+
+    def add_one_off(self, label: str, source_ids: list[int], run_at: datetime, created_by: int | None) -> int:
+        return self._x("INSERT INTO one_offs(label, source_ids, run_at, created_by, created_at) VALUES(?,?,?,?,?)",
+                       (label, json.dumps(source_ids), run_at.isoformat(), created_by, _now()))
+
+    def list_one_offs(self, statuses: Iterable[str] = ("pending",)) -> list[OneOff]:
+        st = list(statuses)
+        rows = self._q(f"SELECT * FROM one_offs WHERE status IN ({','.join('?' * len(st))}) ORDER BY run_at", st)
+        return [self._oneoff(r) for r in rows]
+
+    def get_one_off(self, oid: int) -> OneOff | None:
+        rows = self._q("SELECT * FROM one_offs WHERE id=?", (oid,))
+        return self._oneoff(rows[0]) if rows else None
+
+    def set_one_off(self, oid: int, status: str, run_id: int | None = None) -> None:
+        self._x("UPDATE one_offs SET status=?, run_id=COALESCE(?, run_id) WHERE id=?", (status, run_id, oid))
 
     # -- runs --------------------------------------------------------------------
     def create_run(self, trigger: str, jdate: str) -> int:

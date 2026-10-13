@@ -143,6 +143,24 @@ class SMB:
     def replace(self, src: str, dst: str) -> None:
         smbclient.replace(src, dst, **self._kw())
 
+    def server_copy(self, src: str, dst: str) -> None:
+        """Copy within one server (SMB copy-chunk): the data never crosses the network."""
+        smbclient.copyfile(src, dst, **self._kw())
+
+    def copy_stream(self, opener: Callable[[], BinaryIO], dst: str) -> None:
+        with opener() as src, self.open_write(dst) as out:
+            shutil.copyfileobj(src, out, COPY_CHUNK)
+
+    def set_mtime(self, path: str, mtime: float) -> None:
+        """Keep the original modification time on a copy (best effort)."""
+        try:
+            smbclient.utime(path, times=(mtime, mtime), **self._kw())
+        except SMBError:
+            pass
+
+    def rename(self, src: str, dst: str) -> None:
+        smbclient.rename(src, dst, **self._kw())
+
     def write_bytes(self, remote: str, data: bytes) -> None:
         with smbclient.open_file(remote, mode="wb", **self._kw()) as f:
             f.write(data)

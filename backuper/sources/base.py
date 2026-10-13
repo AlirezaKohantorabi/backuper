@@ -38,10 +38,9 @@ COMMON_FIELDS: list[Field] = [
     Field("schedule", "Own time", SCHEDULE, required=False, default="", show_if=("group", ("", None)),
           help="Only for sources outside a group: when this one runs by itself, e.g. 19:00 "
                "(or cron lines separated by ';'). Empty = manual only."),
-    Field("telegram", "Send to Telegram", BOOL, default=True,
+    Field("telegram", "Send to Telegram", BOOL, default=True, show_if=("format", ("zip", None)),
           help="Off = keep it only in the archive (for data too big for Telegram). The zip is then written "
-               "straight into the archive, without a temporary copy on this server.",
-          tags=frozenset({"advanced"})),
+               "straight into the archive, without a temporary copy on this server."),
     Field("archive_keep", "Archive copies to keep", INT, default=0, min=0, max=3650,
           help="Keep only the newest N backups of this source in the archive. 0 = follow the global "
                "'Archive days to keep'. Useful for very large folders.",

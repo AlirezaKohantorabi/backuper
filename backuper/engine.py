@@ -164,7 +164,7 @@ class Engine:
                      for src in sources}
             # Phase 2 — as soon as every Telegram-bound source is ready: upload, smallest first.
             # Archive-only sources (e.g. huge folders) keep zipping meanwhile.
-            tg = [tasks[s.id] for s in sources if s.config.get("telegram", True)]
+            tg = [tasks[s.id] for s in sources if self._uploads(s)]
             tg_results = list(await asyncio.gather(*tg))
             await self._wait_until(upload_not_before, prog)
             if self._upload_lock.locked():
@@ -229,6 +229,11 @@ class Engine:
                 log.debug("progress callback failed", exc_info=True)
         log.info("Run #%d finished: %s in %s", run_id, status, human_duration(duration))
         return run_id
+
+    def _uploads(self, src: SourceRecord) -> bool:
+        """Will this source produce Telegram uploads? (Others don't hold the upload phase back.)"""
+        return (self.sender is not None and bool(src.config.get("telegram", True))
+                and src.config.get("format") != "copy")
 
     def _next_time(self, hhmm: str) -> datetime | None:
         """Next occurrence of HH:MM from now (today if still ahead, else tomorrow)."""
@@ -313,6 +318,18 @@ class Engine:
             size=0, local_path=None, entries_count=len(art.entries), raw_size=art.total_size,
             send_telegram=send_tg,
         )
+
+        if art.meta.get("format") == "copy":
+            # Plain folder copy (e.g. big file-server folders): no zip, archive only.
+            if not self.archive.enabled:
+                raise SourceError("'Store as: copy' needs an archive location")
+            dirname = file_name[: -len(".zip")]
+            sp.phase = "copying → archive"
+            pf.file_name, pf.send_telegram = dirname, False
+            pf.archive_rel, pf.size, warnings = await self.archive.copy_tree(
+                art, folder, dirname, skip_unreadable=bool(art.meta.get("skip_unreadable")), progress=progress)
+            art.warnings.extend(warnings)
+            return pf
 
         if not send_tg:
             # Archive-only: stream the zip straight into the archive, no local copy.

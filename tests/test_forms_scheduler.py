@@ -62,3 +62,19 @@ def test_legacy_global_schedule_becomes_a_group(cfg, tmp_path):
     assert g and g.schedule == "0 3 * * *"
     assert new.get_source_by_name("A").config["group"] == "Daily"
     assert not new.get_source_by_name("B").config.get("group")
+
+
+def test_one_off_runs_are_scheduled_or_marked_missed(cfg, store):
+    from datetime import datetime, timedelta
+
+    sid = store.create_source("A", "smb_folder", {"path": r"\\h\s", "credential": "c"}, set())
+    now = datetime.now(cfg.timezone)
+    future = store.add_one_off("A", [sid], now + timedelta(hours=3), 42)
+    recent = store.add_one_off("A", [sid], now - timedelta(minutes=10), 42)   # missed briefly: still runs
+    old = store.add_one_off("A", [sid], now - timedelta(hours=5), 42)         # too late: missed
+    sched = Scheduler(Engine(cfg, store, None), store, cfg.timezone)
+    sched.reload()
+    ids = {j.id for j in sched._sched.get_jobs()}
+    assert f"once:{future}" in ids and f"once:{recent}" in ids and f"once:{old}" not in ids
+    assert store.get_one_off(old).status == "missed"
+    assert any(label.startswith("⏱ once") for _, label, _ in sched.next_runs())
