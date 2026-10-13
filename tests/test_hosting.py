@@ -2,7 +2,7 @@ from pathlib import Path
 
 from backuper.models import SourceRecord
 from backuper.sources.base import RunContext
-from backuper.sources.hosting_common import download_and_delete
+from backuper.sources.hosting_common import clear_old_archives, companions, download_and_delete, keep_mode
 from backuper.transport.remote import RemoteEntry, RemoteFS
 
 
@@ -34,9 +34,9 @@ def _ctx(store, tmp_path):
 
 
 async def test_default_deletes_only_the_new_backup(store, tmp_path):
-    fs = FakeFS(["backup-old.tar.gz", "backup-new.tar.gz", "other.txt"])
+    fs = FakeFS(["backup-old.tar.gz", "backup-new.tar.gz", "backup-new.json", "other.txt"])
     art = await download_and_delete(fs, "/", "backup-new.tar.gz", _ctx(store, tmp_path))
-    assert set(fs.files) == {"backup-old.tar.gz", "other.txt"}
+    assert set(fs.files) == {"backup-old.tar.gz", "other.txt"}           # DirectAdmin's .json goes too
     assert art.entries[0].arcname == "backup-new.tar.gz" and art.entries[0].compress is False
 
 
@@ -46,3 +46,17 @@ async def test_keep_on_host_keeps_newest_and_removes_older_archives(store, tmp_p
     await download_and_delete(fs, "/", "backup-new.tar.gz", ctx, keep_on_host=True)
     assert set(fs.files) == {"backup-new.tar.gz", "public_html"}
     assert len(ctx.notes) == 2 and not ctx.warnings
+
+
+async def test_replace_mode_clears_old_backups_before_the_new_one(store, tmp_path):
+    fs = FakeFS(["backup-2026-10-10.tar.gz", "backup-2026-10-10.json", "domains"])
+    ctx = _ctx(store, tmp_path)
+    assert await clear_old_archives(fs, "/", ctx) == 1
+    assert set(fs.files) == {"domains"} and ctx.notes
+
+
+def test_keep_modes_and_side_files():
+    assert keep_mode({}) == "no" and keep_mode({"keep_on_host": False}) == "no"
+    assert keep_mode({"keep_on_host": True}) == "newest"            # old yes/no configs
+    assert keep_mode({"keep_on_host": "replace"}) == "replace"
+    assert companions("backup-x_2026-10-10-09-16-01.tar.gz") == ["backup-x_2026-10-10-09-16-01.json"]

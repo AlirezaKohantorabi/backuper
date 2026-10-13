@@ -9,6 +9,22 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.5.0] — 2026-10-13
+
+### Added
+- **Troubleshooting logs.** Every log line is tagged with its run and source (`[run#41 Hamrahan]`), and every
+  run writes its own detailed log `data/logs/runs/run-<id>.log` (DEBUG): sources and settings, which file was
+  chosen and why, BACKUP options, router commands (passwords masked), API calls, zip/copy/archive/upload sizes,
+  durations and speeds, every retention deletion, final result per source, tracebacks. Sent by the bot
+  (📊 History → run → **📄 Log**) or printed with `backuper log [<id>] [--tail N]`. Newest 300 kept.
+- Hosting panels: **Backup copy on the host** is now `no` / `newest` / `replace` — `replace` deletes the old
+  backup *before* making the new one (needs room for only one backup), then keeps the new one.
+  Old yes/no settings keep working (yes = `newest`).
+- DirectAdmin's `.json` side file is deleted together with its backup.
+
+### Changed
+- Log format: `time level [run#N source] logger: message`; console/file stay at `LOG_LEVEL`, run files get DEBUG.
+
 ## [1.4.0] — 2026-10-13
 
 ### Added

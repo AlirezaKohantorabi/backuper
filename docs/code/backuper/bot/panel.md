@@ -25,7 +25,7 @@ every form. It only talks to the rest of the program through the `BotApp` it get
         │             └─ ➕ Add source → type → wizard → 💾 Save / Save & test
         ├─ 🔑 Credentials ── page ── ✏️ fields · 🗑 (refused while in use)
         ├─ ▶️ Run all now
-        ├─ 📊 History ── run ── 📤 Resend (zips that went to Telegram)
+        ├─ 📊 History ── run ── 📤 Resend (zips that went to Telegram) · 📄 Log
         ├─ 🗂 Groups ── group page ── sources (buttons) · ▶️ Run group · ⏱ Run once · 📦 Add/remove
         │                            · ⏰ Start time · 📤 Upload from · 🏷 Rename · ⏸ · 🗑
         ├─ ⏰ Schedule (groups, own times, manual-only, upcoming, one-time runs with ✖️ cancel)
@@ -85,6 +85,7 @@ Commands: /start /menu /run [Name] /status /cancel /id /help, and /bind inside t
 | `Panel.start_run` | Starts a manual run in the background and keeps a progress message updated; manual runs upload as soon as they're done. |
 | `Panel.show_history` / `Panel.show_run` | Recent runs / one run's report with 📤 Resend buttons (only for items that went to Telegram). |
 | `Panel.resend` | Re-uploads an item's zips from the archive. |
+| `Panel.send_run_log` | 📄 Log: sends the run's detailed log file (every step, timing and error of that run). |
 | `Panel._cred_usage` | Which sources/settings use a credential (deleting is refused while used). |
 | `Panel.show_credentials` / `Panel.show_credential` | Credential list / page (password never shown). |
 | `Panel.edit_credential_field` | Change name, username, password or note. Renames update every reference. |

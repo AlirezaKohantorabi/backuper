@@ -35,6 +35,9 @@ class FakeClient:
     async def edit_message(self, chat, msg_id, text, **kw):
         return None
 
+    async def send_file(self, chat, path, **kw):
+        self.files = getattr(self, "files", []) + [path]
+
     def add_event_handler(self, *a, **kw):
         pass
 
@@ -253,6 +256,19 @@ async def test_full_admin_flow(panel, store):
     # credential in use can't be deleted
     ev = await press(panel, f"cd:{cred.id}")
     assert ev.alerts and "Still used" in ev.alerts[0]
+
+    # history: a run's detailed log can be fetched
+    from backuper import logctx
+    run_id = store.create_run("t", "1405-07-21")
+    ev = await press(panel, f"hv:{run_id}")
+    assert f"hlog:{run_id}" in all_buttons(ev.buttons)
+    ev = await press(panel, f"hlog:{run_id}")
+    assert ev.alerts and "No log" in ev.alerts[0]              # nothing kept yet → clear message
+    path = logctx.run_log_path(panel.app.cfg.log_dir, run_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("log")
+    await press(panel, f"hlog:{run_id}")
+    assert panel.app.client.files == [str(path)]
 
     # history + delete
     await press(panel, "hl")

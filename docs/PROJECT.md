@@ -119,7 +119,7 @@ database's secrets can only be decrypted with `SECRET_KEY`).
 | Old backups on SQL servers | "Keep last N" per database (collect: per group of files; run-BACKUP: `mine` = only the bot's files, `all` = also the application's `<db>_*.bak`) | Only after the new backup is safely in the archive (or Telegram). Never the newest file. |
 | Archive date folders | Keep the newest N (default 14) | Only folders named like a Jalali date. |
 | Per-source archive copies | "Archive copies to keep" | Never a file that also belongs to a kept copy. |
-| Hosting panel archives | Deleted from the host after download (even if the download failed), or *Keep newest on host* | — |
+| Hosting panel archives | `no`: deleted after download (even if the download failed); `newest`: the new one stays, older deleted after download; `replace`: older deleted *before* the new backup, the new one stays | — |
 | Router files | Export/backup files deleted from the router after download | — |
 | Staging | Run folders deleted after each run; `unsent/` after the archive retention period | Zips that reached nowhere are kept. |
 
@@ -144,13 +144,18 @@ database's secrets can only be decrypted with `SECRET_KEY`).
 |---|---|
 | Install / upgrade | `git pull && ./install.sh` (keeps `.env` and `data/`), then `sudo systemctl restart backuper`. See [SETUP.md](SETUP.md). |
 | Start / stop / status | `sudo systemctl restart|stop|status backuper` |
-| Logs | `journalctl -u backuper -f` or `data/logs/backuper.log` |
+| Logs | per run: bot 📄 Log / `backuper log [id]`; service: `journalctl -u backuper -f`, `data/logs/backuper.log` |
 | Run now | bot ▶️ (all / a group / a source) or `backuper run [Name…]` |
 | Check config | `backuper check`, `backuper test [Name…]`, `backuper list` |
 | Move to another company | clone + `./install.sh` + new bot + `backuper import company.yaml` + passwords. |
 | Restore | open the zip with 7-Zip/WinRAR (parts: put all `.zip.0NN` in one folder, open `.001`), then restore the `.bak` / `.backup` / `.rsc` / panel archive as described in [SETUP.md](SETUP.md#restoring). |
 
 ## 11. Troubleshooting
+
+**Start with the run's log:** 📊 History → the run → **📄 Log** (or `backuper log` on the server). Every
+line is tagged `[run#N Source]`; it shows each step with sizes, durations and speeds, the exact error and a
+traceback for unexpected ones. The service log (`journalctl -u backuper -f`, `data/logs/backuper.log`)
+covers everything outside runs (startup, schedule, bot). See [code/backuper/logctx.md](code/backuper/logctx.md).
 
 | Symptom | Likely cause / fix |
 |---|---|

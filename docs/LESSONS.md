@@ -56,6 +56,8 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 | 10 | Website backups grew 6 GB → 13.7 GB | an old backup sitting inside the account (`public_ftp/incoming`) is included in each new backup | scanning the largest files | Don't keep backups inside the account (or exclude them). |
 | 11 | A patch failed / a test helper broke | library changes: Telethon 1.45 moved inline-button data and forum-topic functions; pyzipper needs its own `ZipInfo` class | probing the libraries before use | Probe new library versions with tiny scripts first. |
 | 12 | Edits applied by scripts didn't match | earlier automatic lint fixes had changed the text the script expected | the script's own assertions | Patch scripts must assert their anchors (they did — nothing half-applied). |
+| 13 | New functions were added without docs | normal development pace | `tests/test_docs.py` failed | The guard works: docs are part of "done". |
+| 14 | Troubleshooting needed digging through mixed logs | log lines didn't say which run/source they belonged to | the owner's request | Context-tagged lines + one log file per run (v1.5). |
 
 ## 4. What we discovered about the environment (and how it changed the plan)
 
@@ -72,11 +74,19 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 - **The link to one subnet is slow** (~8.7 MB/s vs ~55 MB/s) — reading an 11 GB backup takes ~22 min.
 - **Some application backups are already compressed** (99% after zip) → store, don't deflate.
 - **Clocks:** the bot server was 62 min slow (time sync never completed — fixed with chrony); every Windows
-  server was 9 min 11 s slow (the DC isn't synced to a real source); one router's NTP client stuck "waiting".
+  server was 9 min 11 s slow. Diagnosis on the DC: `w32tm /query /source` = *Local CMOS Clock*,
+  `/query /configuration` showed `Type: NT5DS (Policy)` — a **Group Policy** forces "sync from the domain
+  hierarchy", which on the top DC means "from nothing", so local `w32tm /config` changes were overridden —
+  and the **Hyper-V time provider** (`VMICTimeProvider`) was enabled. `w32tm /stripchart` to time.windows.com
+  worked (offset +551 s), so NTP itself wasn't blocked. **Lesson:** look for "(Policy)" in w32tm output before
+  changing local settings. Our design choice (D17) made the backups independent of it anyway.
 - **Routers** use custom SSH ports; RouterOS service *Available From* is separate from firewall address
   lists; tunnelled sites may see a different source IP.
 - **Hosting:** FTP certificates are issued to the server's name, not the site; one website domain is behind a
-  CDN (the panel and FTP are on the real server name).
+  CDN (the panel and FTP are on the real server name). DirectAdmin writes a `.json` file next to each backup.
+- **File-server folders** are big in file count: Edari 32,760 files / 21 GB, Finance 11,995 files / 13 GB
+  (listed in 29 s and 14 s once listing used the directory metadata). Rights granted with `icacls` on the top
+  folder are inherited by the children.
 - **my.telegram.org** refused to create the API app ("ERROR") for an old account on a normal connection —
   the one external dependency we couldn't solve from our side → archive-only mode.
 
@@ -132,7 +142,6 @@ icacls (Get-SmbShare -Name 'Edari').Path /grant "${bot}:(OI)(CI)RX"
 ## Open items at the time of writing (2026-10-13)
 
 - Telegram api_id (my.telegram.org "ERROR").
-- Factory and DC routers refuse the bot's login (allowed address vs the IP the router sees).
-- Edari/Finance read rights for the bot account.
+- Factory and DC routers refuse the bot's login — user being rebuilt.
 - Hamrahan System SQL logins (vendor).
-- Domain controller time source.
+- Domain controller time source: Group Policy + Hyper-V time provider (see §4).

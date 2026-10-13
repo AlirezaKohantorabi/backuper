@@ -9,7 +9,8 @@ from backuper.fields import CREDENTIAL, HOST, INT, LIST, TEXT, Field
 from backuper.models import Artifact
 from backuper.sources.base import SourceError, SourceType
 from backuper.sources.hosting_common import (
-    TRANSFER_FIELDS, download_and_delete, list_archives, open_transfer, pin_transfer_key, wait_new_archive_stable,
+    TRANSFER_FIELDS, clear_old_archives, download_and_delete, keep_mode, list_archives, open_transfer,
+    pin_transfer_key, wait_new_archive_stable,
 )
 
 ALL_ITEMS = ["domain", "subdomain", "email", "forwarder", "autoresponder", "vacation", "list",
@@ -66,7 +67,7 @@ class DirectAdmin(SourceType):
         async with open_transfer(self.ctx, self.cfg, self.cfg["credential"]) as fs:
             pin_transfer_key(self.ctx, fs)
             existing = await list_archives(fs, self.cfg.get("remote_dir") or "/backups")
-        if self.cfg.get("keep_on_host"):
+        if keep_mode(self.cfg) != "no":
             note = f" {len(existing)} backup(s) kept on the host (newest is kept by design)." if existing else ""
         else:
             note = f" ⚠️ {len(existing)} old backup archive(s) are sitting on the host." if existing else ""
@@ -77,12 +78,15 @@ class DirectAdmin(SourceType):
         timeout_s = int(self.cfg.get("timeout_minutes") or 180) * 60
         async with self._client() as client, open_transfer(self.ctx, self.cfg, self.cfg["credential"]) as fs:
             pin_transfer_key(self.ctx, fs)
+            if keep_mode(self.cfg) == "replace":
+                await clear_old_archives(fs, remote_dir, self.ctx)
             before = set(await list_archives(fs, remote_dir))
             form = {"action": "backup", "domain": self.cfg["domain"]}
             for i, item in enumerate(self.cfg.get("items") or ALL_ITEMS):
                 form[f"select{i}"] = item
+            self.ctx.log.debug("DirectAdmin CMD_API_SITE_BACKUP items: %s", ", ".join(form[k] for k in form if k.startswith("select")))
             self._parse(await client.post("/CMD_API_SITE_BACKUP", data=form), "create backup")
             self.ctx.log.info("DirectAdmin backup queued on %s", self.cfg["host"])
             entry = await wait_new_archive_stable(fs, remote_dir, before, self.ctx, timeout_s)
             return [await download_and_delete(fs, remote_dir, entry.name, self.ctx,
-                                              keep_on_host=bool(self.cfg.get("keep_on_host")))]
+                                              keep_on_host=keep_mode(self.cfg) != "no")]

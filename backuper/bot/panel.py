@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from telethon import Button, errors, events
 
-from backuper import jalali
+from backuper import jalali, logctx
 from backuper.bot.forms import FormState, prompt, summary
 from backuper.destinations.telegram import TOPICS_KEY, esc
 from backuper.fields import CREDENTIAL, GROUP, INT, SCHEDULE, SECRET, TEXT, TIME, Field, FieldError, describe_schedule
@@ -209,6 +209,7 @@ class Panel:
             "hl": lambda e, _: self.show_history(e),
             "hv": lambda e, a: self.show_run(e, int(a)),
             "hr": lambda e, a: self.resend(e, int(a)),
+            "hlog": lambda e, a: self.send_run_log(e, int(a)),
             "sch": lambda e, _: self.show_schedule(e),
             "gl": lambda e, _: self.show_groups(e),
             "gv": lambda e, a: self.show_group(e, int(a)),
@@ -581,8 +582,17 @@ class Panel:
             files = json.loads(it["files"] or "[]")
             if any(f.get("send_telegram", True) for f in files):  # archive-only items are never re-sent
                 rows.append([Button.inline(f"📤 Resend {it['source_name']}"[:60], f"hr:{it['id']}".encode())])
-        rows.append([Button.inline("⬅️ History", b"hl"), *BACK_MAIN])
+        rows.append([Button.inline("📄 Log", f"hlog:{run_id}".encode()), Button.inline("⬅️ History", b"hl"), *BACK_MAIN])
         await self._respond(event, (run["summary"] or f"Run #{run_id}: {run['status']}")[:4000], rows)
+
+    async def send_run_log(self, event, run_id: int) -> None:
+        """📄 Log: send the run's detailed log file (every step, timing and error of that run)."""
+        path = logctx.run_log_path(self.app.cfg.log_dir, run_id)
+        if not path.exists():
+            raise SourceError(f"No log kept for run #{run_id} (only the newest {logctx.RUN_LOGS_KEEP} are kept)")
+        await event.answer("Sending the log…")
+        await self.app.client.send_file(event.chat_id, str(path), caption=f"📄 Log of run #{run_id}",
+                                        force_document=True)
 
     async def resend(self, event, item_id: int) -> None:
         await event.answer("Re-sending from the archive…")

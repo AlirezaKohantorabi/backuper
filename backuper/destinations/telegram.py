@@ -98,6 +98,7 @@ class TelegramSender:
         for upd in getattr(result, "updates", []):
             msg = getattr(upd, "message", None)
             if isinstance(msg, types.MessageService) and isinstance(msg.action, types.MessageActionTopicCreate):
+                log.info("created Telegram topic %r (id %d)", title, msg.id)
                 return msg.id
         for upd in getattr(result, "updates", []):
             if isinstance(upd, types.UpdateMessageID):
@@ -149,6 +150,7 @@ class TelegramSender:
                     def prog(done: int, base=sent_before):
                         if progress:
                             progress(base + done)
+                    log.debug("uploading part %d/%d %s (%d bytes), attempt %d", i, len(ranges), pname, length, attempt)
                     handle = await fast_upload(self.client, path, offset, length, pname, prog)
                     caption = captions(i, len(ranges))
 

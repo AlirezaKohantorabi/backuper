@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from typing import Any
 
@@ -9,6 +10,8 @@ from backuper.models import Artifact, Entry
 from backuper.sources.base import SourceError, SourceType
 from backuper.transport import ssh
 
+log = logging.getLogger(__name__)
+
 # RouterOS prints command errors to stdout and still exits 0
 _ROS_ERROR = re.compile(r"^(failure:|syntax error|bad command name|expected end of command|no such item|"
                         r"input does not match|invalid value|not enough permissions|ambiguous value)",
@@ -16,6 +19,7 @@ _ROS_ERROR = re.compile(r"^(failure:|syntax error|bad command name|expected end 
 
 
 async def ros(conn, command: str, timeout: int = 300) -> str:
+    log.debug("RouterOS> %s", re.sub(r"(password=)(\"[^\"]*\"|\S+)", r"\1***", command))
     out = await ssh.run(conn, command, timeout=timeout)
     m = _ROS_ERROR.search(out)
     if m:
@@ -124,6 +128,8 @@ class MikroTik(SourceType):
         try:
             info = await self._info(conn)
             major = int((info.get("version") or "7").split(".")[0] or 7)
+            self.ctx.log.info("connected to %s (%s, RouterOS %s)", info.get("identity"), info.get("board-name"),
+                              info.get("version"))
             wanted: list[str] = []
 
             if self.cfg.get("export", True):
@@ -154,6 +160,7 @@ class MikroTik(SourceType):
                     local = self.ctx.workdir / remote.split("/")[-1]
                     await sftp.get(remote, str(local))
                     local_files.append(local)
+                    self.ctx.log.info("downloaded %s (%d bytes)", remote, local.stat().st_size)
                 for remote in found:
                     try:
                         await sftp.remove(remote)

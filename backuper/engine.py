@@ -25,7 +25,7 @@ from pathlib import Path
 
 import jdatetime
 
-from backuper import jalali
+from backuper import jalali, logctx
 from backuper.config import AppConfig
 from backuper.db import Store
 from backuper.destinations.archive import Archive
@@ -41,6 +41,10 @@ from backuper.util import hashtag, human_duration, human_size, safe_filename, sh
 log = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[str], Awaitable[None]]
+
+
+def _speed(nbytes: int, seconds: float) -> str:
+    return f"{nbytes / 2**20 / seconds:.1f} MB/s" if seconds > 0.05 else "instant"
 MIN_FREE_BYTES = 1024 * 1024 * 1024
 
 
@@ -133,6 +137,8 @@ class Engine:
         else:
             sources = [s for s in (self.store.get_source(i) for i in source_ids) if s is not None]
         run_id = self.store.create_run(trigger, folder)
+        run_token = logctx.run_var.set(str(run_id))
+        run_log = logctx.start_run_log(self.cfg.log_dir, run_id)
         results: list[ItemResult] = []
         for src in [s for s in sources if s.id in self._active]:
             results.append(ItemResult(source_id=src.id, source_name=src.name, status=SKIPPED,
@@ -146,7 +152,13 @@ class Engine:
                            sources={s.id: SourceProgress(s.name) for s in sources})
         self.runs[run_id] = prog
         started = time.monotonic()
-        log.info("Run #%d (%s) started: %d source(s), folder %s", run_id, trigger, len(sources), folder)
+        log.info("Run #%d (%s) started: %d source(s), archive folder %s, upload from %s, Telegram %s",
+                 run_id, trigger, len(sources), folder, upload_from or "-",
+                 "on" if self.sender else "off (archive-only)")
+        for s in sources:
+            log.info("  source %s (%s): %s", s.name, s.type, self._describe(s))
+        for r in results:
+            log.info("  source %s skipped: %s", r.source_name, r.message)
 
         stop_ticker = asyncio.Event()
         ticker = asyncio.create_task(self._ticker(prog, on_progress, stop_ticker)) if on_progress else None
@@ -177,6 +189,8 @@ class Engine:
             if self.archive.enabled:
                 try:
                     pruned = await self.archive.prune()
+                    log.info("archive retention: %s", f"removed date folders {', '.join(pruned)}" if pruned
+                             else "nothing to remove")
                     if pruned:
                         archive_note = f"🧹 archive: removed {', '.join(pruned)}"
                 except Exception as e:  # noqa: BLE001
@@ -187,6 +201,7 @@ class Engine:
             for t in tasks.values():
                 t.cancel()
             if isinstance(e, asyncio.CancelledError):
+                logctx.stop_run_log(run_log)
                 raise
             log.exception("Run #%d crashed", run_id)
             done = {r.source_id for r in results}
@@ -217,14 +232,28 @@ class Engine:
                                     (res.finished - res.started) if res.started else 0)
         self.store.finish_run(run_id, status, total, report)
         self.store.prune_runs()
+        for res in results:
+            log.info("result %s: %s%s%s", res.source_name, res.status,
+                     f" — {res.message}" if res.message else "",
+                     "".join(f"\n    · {w}" for w in res.warnings))
         await self._publish_report(status, report)
         if on_progress:
             try:
                 await on_progress(report)
             except Exception:  # noqa: BLE001
                 log.debug("progress callback failed", exc_info=True)
-        log.info("Run #%d finished: %s in %s", run_id, status, human_duration(duration))
+        log.info("Run #%d finished: %s in %s, %s", run_id, status, human_duration(duration), human_size(total))
+        logctx.stop_run_log(run_log)
+        logctx.run_var.reset(run_token)
+        logctx.prune_run_logs(self.cfg.log_dir)
         return run_id
+
+    @staticmethod
+    def _describe(src: SourceRecord) -> str:
+        try:
+            return get_type(src.type).describe(src.config)
+        except Exception:  # noqa: BLE001
+            return "?"
 
     def _uploads(self, src: SourceRecord) -> bool:
         """Will this source produce Telegram uploads? (Others don't hold the upload phase back.)"""
@@ -256,8 +285,10 @@ class Engine:
                               sem: asyncio.Semaphore, prog: RunProgress, pending: dict[int, _Pending]) -> ItemResult:
         res = ItemResult(source_id=src.id, source_name=src.name)
         sp = prog.sources[src.id]
+        logctx.source_var.set(src.name)  # this task's log lines are tagged with the source
         async with sem:
             res.started = time.time()
+            log.info("collecting (%s)", src.type)
             ctx = RunContext(self.store, src, run_dir / f"src-{src.id}", now)
             try:
                 cls = get_type(src.type)
@@ -265,6 +296,9 @@ class Engine:
                 pending[src.id] = _Pending(plugin)
                 sp.phase = "collecting"
                 artifacts = await plugin.collect()
+                log.info("collected %d item(s) in %s: %s", len(artifacts), human_duration(time.time() - res.started),
+                         ", ".join(f"{a.label or src.name} ({len(a.entries)} file(s), {human_size(a.total_size)})"
+                                   for a in artifacts) or "nothing")
                 for art in artifacts:
                     pf = await self._package(src, cls, art, ctx, folder, sp)
                     res.files.append(pf)
@@ -279,10 +313,12 @@ class Engine:
                 else:
                     res.warnings.extend(f"note: {n}" for n in ctx.notes)
             except SourceError as e:
+                log.error("FAILED: %s", e)
+                log.debug("details", exc_info=True)
                 res.status, res.message = FAILED, str(e)
                 sp.phase = "failed"
             except Exception as e:  # noqa: BLE001 - one source must never break the run
-                log.exception("Source %s failed", src.name)
+                log.exception("FAILED with an unexpected error")
                 res.status, res.message = FAILED, short_error(e)
                 sp.phase = "failed"
             res.warnings.extend(ctx.warnings)
@@ -322,9 +358,16 @@ class Engine:
             dirname = file_name[: -len(".zip")]
             sp.phase = "copying → archive"
             pf.file_name, pf.send_telegram = dirname, False
+            t0 = time.monotonic()
+            log.info("copying %d file(s), %s, to archive %s/%s", len(art.entries), human_size(art.total_size),
+                     folder, dirname)
             pf.archive_rel, pf.size, warnings = await self.archive.copy_tree(
                 art, folder, dirname, skip_unreadable=bool(art.meta.get("skip_unreadable")), progress=progress)
             art.warnings.extend(warnings)
+            log.info("copied %s in %s (%s); %d file(s) skipped", human_size(pf.size),
+                     human_duration(time.monotonic() - t0), _speed(pf.size, time.monotonic() - t0), len(warnings))
+            for w in warnings:
+                log.warning(w)
             return pf
 
         if not send_tg:
@@ -333,9 +376,13 @@ class Engine:
                 raise SourceError("'Send to Telegram' is off and no archive location is set — "
                                   "this backup would go nowhere")
             sp.phase = "zipping → archive"
+            t0 = time.monotonic()
+            log.info("zipping %s (%s) straight into archive %s", file_name, human_size(art.total_size), folder)
             pf.archive_rel, pf.size, warnings = await self.archive.write_direct(
                 folder, file_name, lambda f: write_zip(art, f, progress=progress, **zip_opts))
             art.warnings.extend(warnings)
+            log.info("zipped %s: %s → %s in %s (%s)", file_name, human_size(art.total_size), human_size(pf.size),
+                     human_duration(time.monotonic() - t0), _speed(art.total_size, time.monotonic() - t0))
             return pf
 
         free = shutil.disk_usage(self.cfg.staging_dir).free
@@ -343,6 +390,9 @@ class Engine:
             raise SourceError(f"staging disk almost full ({human_size(free)} free in {self.cfg.staging_dir})")
         out = ctx.workdir / "zip" / file_name
         sp.phase = "zipping"
+        t0 = time.monotonic()
+        log.info("zipping %s (%d file(s), %s)%s", file_name, len(art.entries), human_size(art.total_size),
+                 ", encrypted" if zip_opts["password"] else ", NOT encrypted (no zip password set)")
         try:
             warnings = await asyncio.to_thread(build_zip, art, out, progress=progress, **zip_opts)
         except OSError as e:
@@ -351,10 +401,15 @@ class Engine:
             raise
         art.warnings.extend(warnings)
         pf.size, pf.local_path = out.stat().st_size, out
+        log.info("zipped %s: %s → %s in %s (%s)", file_name, human_size(art.total_size), human_size(pf.size),
+                 human_duration(time.monotonic() - t0), _speed(art.total_size, time.monotonic() - t0))
         if self.archive.enabled:
             sp.phase = "archiving"
+            t0 = time.monotonic()
             try:
                 pf.archive_rel = await self.archive.store_file(out, folder, file_name)
+                log.info("archived %s in %s (%s)", pf.archive_rel, human_duration(time.monotonic() - t0),
+                         _speed(pf.size, time.monotonic() - t0))
             except Exception as e:  # noqa: BLE001
                 log.exception("archiving %s failed", file_name)
                 art.warnings.append(f"archive copy failed: {short_error(e)}")
@@ -371,6 +426,8 @@ class Engine:
                 f.upload_error = "Telegram is not configured"
             return
         retries = int(self.store.get_setting("upload_retries") or 3)
+        log.info("uploading %d file(s), %s, smallest first: %s", len(files), human_size(sum(f.size for f in files)),
+                 ", ".join(f"{f.file_name} ({human_size(f.size)})" for f in files))
         for i, pf in enumerate(files, start=1):
             prog.upload_index, prog.upload_name, prog.upload_size, prog.upload_done = i, pf.file_name, pf.size, 0
             await self._upload_one(pf, now, retries, prog)
@@ -390,8 +447,12 @@ class Engine:
                 if prog:
                     prog.upload_done = done
 
-            await self.sender.upload_file(pf.local_path, pf.file_name, captions, topic, progress, retries)
+            t0 = time.monotonic()
+            log.info("uploading %s (%s) to topic %s", pf.file_name, human_size(pf.size), topic or "main chat")
+            parts = await self.sender.upload_file(pf.local_path, pf.file_name, captions, topic, progress, retries)
             pf.uploaded = True
+            log.info("uploaded %s in %d part(s), %s (%s)", pf.file_name, parts or 1,
+                     human_duration(time.monotonic() - t0), _speed(pf.size, time.monotonic() - t0))
         except Exception as e:  # noqa: BLE001
             log.exception("upload of %s failed", pf.file_name)
             pf.upload_error = short_error(e)
@@ -462,6 +523,7 @@ class Engine:
                         continue
                     try:
                         if await self.archive.delete(rel):
+                            log.info("archive retention: removed old copy %s", rel)
                             res.warnings.append(f"retention: removed old archive copy {rel}")
                     except Exception as e:  # noqa: BLE001
                         res.warnings.append(f"couldn't remove old archive copy {rel}: {short_error(e)}")

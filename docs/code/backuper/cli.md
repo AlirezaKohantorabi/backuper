@@ -16,6 +16,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `backuper test [Name…]` | Each source's connection test (no backup is made). |
 | `backuper check` | Config, staging space, timezone/Jalali date, owners, zip password, archive write test. |
 | `backuper list` | Sources with type and summary. |
+| `backuper log [RUN] [--tail N]` | A run's detailed log (default: the newest run). |
 | `backuper import FILE.yaml [--dry-run]` | Bulk-load settings, groups, credentials and sources (upsert by name). |
 | `backuper export [FILE]` | Current configuration as YAML, **without** passwords. |
 | `backuper credential NAME [-u USER]` | Create/update a credential; the password is typed hidden. |
@@ -27,7 +28,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | Name | What it does |
 |---|---|
 | `log` | The application's root logger name (`backuper`). |
-| `setup_logging` | Console (journald) + rotating file `data/logs/backuper.log` (10 MB × 5); quiets noisy libraries. |
+| `setup_logging` | Console (journald) + rotating file `data/logs/backuper.log` (10 MB × 5) at `LOG_LEVEL`, every line tagged `[run#N source]` (see [logctx](logctx.md)); the root logger passes DEBUG so per-run logs get detail; quiets noisy libraries. |
 | `open_store` | Opens the database with the `SECRET_KEY` box. |
 | `cmd_gen_key` | `gen-key`. |
 | `cmd_serve` | `serve` — chooses bot mode or archive-only mode. |
@@ -40,4 +41,5 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `cmd_credential` | `credential` — `getpass` for the password. |
 | `cmd_set` | `set`. |
 | `cmd_list` | `list`. |
+| `cmd_log` | `log` — prints `data/logs/runs/run-<id>.log`. |
 | `main` | Argument parsing; prints `ConfigError` nicely and exits 2. |

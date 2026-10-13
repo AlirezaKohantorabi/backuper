@@ -14,8 +14,21 @@ on the host (*Keep newest backup on the host*).
 certificate, so TLS verification can stay on), `transfer_port`, `transfer_credential` (FTP login; empty =
 panel login), `verify_tls`, `keep_on_host`, `timeout_minutes`.
 
+**Backup copy on the host (`keep_on_host`):**
+
+| Mode | What happens | Room needed on the host |
+|---|---|---|
+| `no` (default) | new archive downloaded, then deleted — nothing stays | one backup |
+| `newest` | new archive stays; older ones deleted after the download | two backups |
+| `replace` | older archives deleted **before** the new backup is made; the new one stays | one backup |
+
 | Name | What it does / why |
 |---|---|
+| `KEEP_MODES` / `keep_mode` | The three modes above; old yes/no configs map to `newest`/`no`. |
+| `companions` | Side files a panel writes next to a backup (DirectAdmin: `backup-….json`). |
+| `remove_archive` | Deletes an archive and its side files from the host. |
+| `clear_old_archives` | `replace` mode: deletes all existing archives before a new backup. |
+| `_log_download` | Logs size, time and speed of a download. |
 | `ARCHIVE_PATTERNS` | File names that count as panel backups (`backup-*.tar.gz`, `.tar.zst`, `.tar`, `.tgz`). |
 | `TRANSFER_FIELDS` | See above. |
 | `open_transfer` | Opens the download connection with the right host, port, login and pinned key. |
@@ -23,7 +36,7 @@ panel login), `verify_tls`, `keep_on_host`, `timeout_minutes`.
 | `is_archive` | Does a file name look like a panel backup? |
 | `list_archives` | Backup archives currently in a folder on the host. |
 | `wait_new_archive_stable` | Waits for a *new* archive (not present before the backup started) to appear and stop growing (3 equal sizes, 20 s apart). Used by DirectAdmin, and by cPanel when its API can't report progress. |
-| `download_and_delete` | Downloads the new archive. Default: deletes it from the host **even if the download failed** (nothing may stay there). `keep_on_host=True`: keeps it and deletes every *older* archive instead. |
+| `download_and_delete` | Downloads the new archive. Default: deletes it (and its side files) from the host **even if the download failed** (nothing may stay there). `keep_on_host=True` (`newest`/`replace`): keeps it and deletes every *older* archive instead. |
 
 **Lesson learned:** the FTP account must start in the account's **home folder**. A cPanel FTP account
 created with the default directory (`public_html/<name>`) can't see the backups cPanel writes to the home

@@ -81,6 +81,8 @@ class MSSQLTrigger(SourceType):
         else:
             kw["server"] = self.cfg["host"]
             kw["port"] = str(self.cfg.get("port") or 1433)
+        self.ctx.log.debug("connecting to SQL Server %s as %s (encryption %s)", kw["server"] +
+                           (f":{kw['port']}" if "port" in kw else ""), cred.username, kw.get("encryption", "auto"))
         try:
             return pymssql.connect(**kw)
         except pymssql.Error as e:
@@ -129,6 +131,7 @@ class MSSQLTrigger(SourceType):
         with self._connect() as conn:
             if self._compress(conn):
                 opts.append("COMPRESSION")
+        self.ctx.log.debug("BACKUP options for %s: %s", db, ", ".join(opts))
         sql = f"BACKUP DATABASE {quote_ident(db)} TO DISK = %s WITH {', '.join(opts)}"
         with self._connect() as conn:
             cur = conn.cursor()
@@ -174,7 +177,7 @@ class MSSQLTrigger(SourceType):
                     f"backup of {db} finished but {share_path} isn't visible — does the share point to "
                     f"{self.cfg['server_dir']}?"
                 ) from e
-            self.ctx.log.info("%s backed up in %.0fs", db, time.monotonic() - started)
+            self.ctx.log.info("%s backed up in %.0fs, %d bytes", db, time.monotonic() - started, st.st_size)
             artifacts.append(Artifact(
                 label=db,
                 entries=[Entry(arcname=file_name, size=st.st_size, mtime=st.st_mtime, opener=smb.opener(share_path))],

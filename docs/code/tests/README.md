@@ -14,6 +14,7 @@ site's servers (see [../../LESSONS.md](../../LESSONS.md)).
 | [test_forms_scheduler.py](test_forms_scheduler.md) | form navigation; scheduling of groups, own times, one-time runs; legacy migration |
 | [test_hosting.py](test_hosting.md) | download/delete vs keep-newest-on-host for hosting panels |
 | [test_jalali.py](test_jalali.md) | one-time run time parsing; date folders |
+| [test_logging.py](test_logging.md) | run logs: tagged lines, only that run, steps present, handler removed, pruning |
 | [test_mssql.py](test_mssql.md) | database-name inference, grouping, labels (incl. Holoo's real file names) |
 | [test_packager.py](test_packager.md) | AES zips, locked files, splitting, storing incompressible data |
 | [test_panel.py](test_panel.md) | a complete simulated admin session in the Telegram panel |

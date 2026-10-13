@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from backuper import __version__, jalali
+from backuper import __version__, jalali, logctx
 from backuper.config import AppConfig, ConfigError, load_config
 from backuper.crypto import SecretBox
 from backuper.db import Store
@@ -23,14 +23,19 @@ log = logging.getLogger("backuper")
 
 
 def setup_logging(cfg: AppConfig) -> None:
-    fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+    """Console (journald) + rotating file at LOG_LEVEL; every line tagged [run#N source].
+    The root logger lets DEBUG through so each run's own log file (see logctx) gets the details."""
+    logctx.install()
+    fmt = logging.Formatter(logctx.FORMAT)
     root = logging.getLogger()
-    root.setLevel(cfg.log_level)
+    root.setLevel(logging.DEBUG)
     stream = logging.StreamHandler()
     stream.setFormatter(fmt)
+    stream.setLevel(cfg.log_level)
     fileh = RotatingFileHandler(cfg.log_dir / "backuper.log", maxBytes=10 * 1024 * 1024, backupCount=5,
                                 encoding="utf-8")
     fileh.setFormatter(fmt)
+    fileh.setLevel(cfg.log_level)
     root.handlers[:] = [stream, fileh]
     for noisy in ("telethon", "smbprotocol", "spnego", "asyncssh", "httpx", "apscheduler"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
@@ -325,6 +330,25 @@ def cmd_set(args) -> int:
     return 0
 
 
+def cmd_log(args) -> int:
+    """Print a run's detailed log (default: the newest run)."""
+    cfg = load_config(args.env, require_telegram=False)
+    run_id = args.run
+    if run_id is None:
+        runs = open_store(cfg).list_runs(1)
+        if not runs:
+            print("No runs yet.", file=sys.stderr)
+            return 1
+        run_id = runs[0]["id"]
+    path = logctx.run_log_path(cfg.log_dir, run_id)
+    if not path.exists():
+        print(f"No log for run #{run_id} ({path})", file=sys.stderr)
+        return 1
+    lines = path.read_text(encoding="utf-8").splitlines()
+    print("\n".join(lines[-args.tail:] if args.tail else lines))
+    return 0
+
+
 def cmd_list(args) -> int:
     from backuper.sources import REGISTRY
 
@@ -349,6 +373,9 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("source", nargs="*")
     sub.add_parser("check", help="check configuration and archive access")
     sub.add_parser("list", help="list sources")
+    lg = sub.add_parser("log", help="show a run's detailed log (default: newest run)")
+    lg.add_argument("run", nargs="?", type=int)
+    lg.add_argument("--tail", type=int, default=0, help="only the last N lines")
     i = sub.add_parser("import", help="import settings/credentials/sources from YAML")
     i.add_argument("file")
     i.add_argument("--dry-run", action="store_true")
@@ -364,7 +391,7 @@ def main(argv: list[str] | None = None) -> None:
 
     handlers = {"serve": cmd_serve, "gen-key": cmd_gen_key, "run": cmd_run, "test": cmd_test, "check": cmd_check,
                 "list": cmd_list, "import": cmd_import, "export": cmd_export, "credential": cmd_credential,
-                "set": cmd_set, None: cmd_serve}
+                "set": cmd_set, "log": cmd_log, None: cmd_serve}
     try:
         sys.exit(handlers[args.cmd](args))
     except ConfigError as e:

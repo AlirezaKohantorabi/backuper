@@ -37,11 +37,20 @@ run(source_ids, trigger, upload_from)
   a file with the same name — this was a real bug caught by a test);
 - without Telegram configured (archive-only mode) every zip goes straight to the archive.
 
+## Logging
+
+Each run sets the run id (and each source task its source name) in [logctx](logctx.md), so every line is
+tagged `[run#N Source]`, and opens `data/logs/runs/run-<id>.log` (DEBUG detail). The engine logs: the run's
+sources and settings, collection result per source, zip/copy/archive sizes, durations and speeds, the upload
+order, each upload's parts and speed, retention deletions, archive pruning, each source's final result and
+warnings, and full tracebacks for unexpected errors.
+
 ## Classes and functions
 
 | Name | What it does / why |
 |---|---|
 | `ProgressCallback` | Type of the function that receives progress text (the bot edits a message with it). |
+| `_speed` | "25.8 MB/s" for log lines. |
 | `MIN_FREE_BYTES` | Refuse to zip into staging with less than 1 GB free. |
 | `SourceProgress` | Live state of one source in a run (phase, bytes done/total). |
 | `RunProgress` | Live state of a run (phase, sources, current upload). |
@@ -54,6 +63,7 @@ run(source_ids, trigger, upload_from)
 | `Engine.startup_cleanup` | Marks crashed runs "interrupted", deletes leftover staging folders. |
 | `Engine._prune_unsent` | Deletes `staging/unsent` zips older than the archive retention. |
 | `Engine.run` | The run described above. `upload_from="HH:MM"` (groups only) delays phase 2 until that time; manual and one-time runs upload right away. Returns the run id. |
+| `Engine._describe` | One-line, secret-free summary of a source for the run log. |
 | `Engine._uploads` | Will this source produce Telegram uploads? (Telegram configured, "Send to Telegram" on, not a plain copy.) Only those are awaited before phase 2. |
 | `Engine._next_time` | Next occurrence of "HH:MM" (today or tomorrow). |
 | `Engine._wait_until` | Sleeps until the upload time, updating the progress text. |

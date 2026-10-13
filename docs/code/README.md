@@ -57,6 +57,7 @@ files in the order below.
 | [backuper/engine.py](backuper/engine.md) | a backup run, end to end |
 | [backuper/fields.py](backuper/fields.md) | form field schema, parsing and display |
 | [backuper/jalali.py](backuper/jalali.md) | Jalali dates, one-time run times |
+| [backuper/logctx.py](backuper/logctx.md) | logs tagged with run/source; one detailed log file per run |
 | [backuper/models.py](backuper/models.md) | dataclasses shared by all modules |
 | [backuper/packager.py](backuper/packager.md) | AES-256 zip creation, splitting for Telegram |
 | [backuper/scheduler.py](backuper/scheduler.md) | groups / own times / one-time runs → timers |

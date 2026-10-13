@@ -15,6 +15,17 @@ from backuper.transport.remote import DEFAULT_PORTS, PROTOCOLS, RemoteEntry, Rem
 
 ARCHIVE_PATTERNS = ["backup-*.tar.gz", "backup-*.tar.zst", "backup-*.tar", "backup-*.tgz"]
 
+KEEP_MODES = ("no", "newest", "replace")
+
+
+def keep_mode(cfg: dict) -> str:
+    """'no' | 'newest' | 'replace' (old configs stored a yes/no: yes = newest)."""
+    v = cfg.get("keep_on_host")
+    if v is True:
+        return "newest"
+    return v if v in KEEP_MODES else "no"
+
+
 TRANSFER_FIELDS = [
     Field("transfer", "Download via", CHOICE, default="ftps", choices=PROTOCOLS,
           help="How to pull the finished archive. ftps = FTP over TLS (recommended over plain ftp)."),
@@ -26,11 +37,17 @@ TRANSFER_FIELDS = [
           help="FTP/SFTP login. Empty = same as the panel login (only works with password auth)."),
     Field("verify_tls", "Verify TLS certificates", BOOL, default=True,
           help="Turn off only for hosts with self-signed certificates."),
-    Field("keep_on_host", "Keep newest backup on the host", BOOL, default=False,
-          help="Leave this run's backup on the hosting account as an extra copy (older backup archives there are "
-               "deleted). Off = nothing stays on the host. Needs room for two backups during a run."),
+    Field("keep_on_host", "Backup copy on the host", CHOICE, default="no", choices=KEEP_MODES,
+          help="no: nothing stays on the hosting account. newest: this run's backup stays as an extra copy, older "
+               "ones are deleted after the download (needs room for two backups). replace: older backups are "
+               "deleted BEFORE the new one is made, and the new one stays (needs room for one)."),
     Field("timeout_minutes", "Timeout (minutes)", INT, default=180, min=5, max=24 * 60),
 ]
+
+
+def _log_download(ctx: RunContext, remote: str, local, t0: float) -> None:
+    size, secs = local.stat().st_size, max(time.monotonic() - t0, 0.001)
+    ctx.log.info("downloaded %s: %.1f MB in %.0fs (%.1f MB/s)", remote, size / 2**20, secs, size / 2**20 / secs)
 
 
 def open_transfer(ctx: RunContext, cfg: dict, panel_cred_name: str) -> RemoteFS:
@@ -50,6 +67,38 @@ def pin_transfer_key(ctx: RunContext, fs: RemoteFS) -> None:
 
 def is_archive(name: str) -> bool:
     return any(fnmatch.fnmatchcase(name, p) for p in ARCHIVE_PATTERNS)
+
+
+def companions(name: str) -> list[str]:
+    """Side files a panel writes next to a backup (DirectAdmin: backup-….json)."""
+    stem = name
+    for ext in (".tar.gz", ".tar.zst", ".tgz", ".tar"):
+        if stem.endswith(ext):
+            stem = stem[: -len(ext)]
+            break
+    return [stem + ".json"]
+
+
+async def remove_archive(fs: RemoteFS, remote_dir: str, name: str, ctx: RunContext) -> None:
+    """Delete a backup archive and its side files from the host (side files may not exist)."""
+    await fs.remove(posixpath.join(remote_dir, name))
+    ctx.log.info("deleted %s from the host", name)
+    for extra in companions(name):
+        try:
+            await fs.remove(posixpath.join(remote_dir, extra))
+            ctx.log.debug("deleted %s from the host", extra)
+        except Exception:  # noqa: BLE001 - usually just not there
+            pass
+
+
+async def clear_old_archives(fs: RemoteFS, remote_dir: str, ctx: RunContext) -> int:
+    """'replace' mode: remove existing backups BEFORE making a new one (quota needs room for one only)."""
+    n = 0
+    for name in list(await list_archives(fs, remote_dir)):
+        await remove_archive(fs, remote_dir, name, ctx)
+        ctx.note(f"deleted older backup {name} from the host before making a new one")
+        n += 1
+    return n
 
 
 async def list_archives(fs: RemoteFS, remote_dir: str) -> dict[str, RemoteEntry]:
@@ -85,23 +134,26 @@ async def download_and_delete(fs: RemoteFS, remote_dir: str, name: str, ctx: Run
     remote = posixpath.join(remote_dir, name)
     local = ctx.workdir / name
     ctx.log.info("downloading %s", remote)
+    t0 = time.monotonic()
     if keep_on_host:
         await fs.download(remote, local)
+        _log_download(ctx, remote, local, t0)
         for old in await list_archives(fs, remote_dir):
             if old == name:
                 continue
             try:
-                await fs.remove(posixpath.join(remote_dir, old))
+                await remove_archive(fs, remote_dir, old, ctx)
                 ctx.note(f"deleted older backup {old} from the host")
             except Exception as e:  # noqa: BLE001
                 ctx.warn(f"couldn't delete older backup {old} from the host: {e}")
     else:
         try:
             await fs.download(remote, local)
+            _log_download(ctx, remote, local, t0)
         finally:
             # Nothing may stay on the hosting account, even if the download failed.
             try:
-                await fs.remove(remote)
+                await remove_archive(fs, remote_dir, name, ctx)
             except Exception as e:  # noqa: BLE001
                 ctx.warn(f"couldn't delete {remote} from the host — delete it manually: {e}")
     return Artifact(label="", entries=[Entry.from_path(local, compress=False)], cleanup=[local])

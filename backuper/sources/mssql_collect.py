@@ -50,6 +50,10 @@ class MSSQLCollect(SourceType):
         files = await asyncio.to_thread(smb.list_files, self.cfg["share"], recursive=bool(self.cfg.get("recursive")))
         mode = self.cfg.get("group_by") or ("database" if self.cfg.get("split_by_database") else "pattern")
         groups = group_files(files, self.cfg.get("patterns") or ["*.bak"], mode)
+        self.ctx.log.info("listed %s: %d file(s), %d group(s) by %s", self.cfg["share"], len(files), len(groups), mode)
+        for key, fs in groups.items():
+            self.ctx.log.debug("group %s: %d file(s), newest %s (%d bytes, %s)", key, len(fs), fs[0].name, fs[0].size,
+                               time.strftime("%Y-%m-%d %H:%M", time.localtime(fs[0].mtime)))
         return smb, groups
 
     async def test(self) -> str:
@@ -77,6 +81,8 @@ class MSSQLCollect(SourceType):
                 self.ctx.note(f"{label}: no new backup since {when} (already stored)")
                 continue
             newest = await wait_until_stable(smb, newest, self.ctx)
+            self.ctx.log.info("%s: taking %s (%d bytes, %s)", label, newest.name, newest.size,
+                              time.strftime("%Y-%m-%d %H:%M", time.localtime(newest.mtime)))
             artifacts.append(Artifact(
                 label=label,
                 entries=[Entry(arcname=newest.name, size=newest.size, mtime=newest.mtime,

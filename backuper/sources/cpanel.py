@@ -10,7 +10,8 @@ from backuper.fields import BOOL, CHOICE, CREDENTIAL, HOST, INT, TEXT, Field
 from backuper.models import Artifact
 from backuper.sources.base import SourceError, SourceType
 from backuper.sources.hosting_common import (
-    TRANSFER_FIELDS, download_and_delete, list_archives, open_transfer, pin_transfer_key, wait_new_archive_stable,
+    TRANSFER_FIELDS, clear_old_archives, download_and_delete, keep_mode, list_archives, open_transfer,
+    pin_transfer_key, wait_new_archive_stable,
 )
 
 
@@ -52,6 +53,7 @@ class CPanel(SourceType):
 
     async def _uapi(self, client: httpx.AsyncClient, module: str, func: str, **params) -> Any:
         r = await client.get(f"/execute/{module}/{func}", params=params)
+        self.ctx.log.debug("cPanel UAPI %s::%s -> HTTP %s", module, func, r.status_code)
         if r.status_code in (401, 403):
             raise SourceError("cPanel rejected the login (check username/token and 'Login type')")
         r.raise_for_status()
@@ -80,7 +82,7 @@ class CPanel(SourceType):
         async with open_transfer(self.ctx, self.cfg, self.cfg["credential"]) as fs:
             pin_transfer_key(self.ctx, fs)
             existing = await list_archives(fs, self.cfg.get("remote_dir") or "/")
-        if self.cfg.get("keep_on_host"):
+        if keep_mode(self.cfg) != "no":
             note = f" {len(existing)} backup(s) kept on the host (newest is kept by design)." if existing else ""
         else:
             note = f" ⚠️ {len(existing)} old backup archive(s) are sitting on the host." if existing else ""
@@ -91,6 +93,8 @@ class CPanel(SourceType):
         timeout_s = int(self.cfg.get("timeout_minutes") or 180) * 60
         async with open_transfer(self.ctx, self.cfg, self.cfg["credential"]) as fs:
             pin_transfer_key(self.ctx, fs)
+            if keep_mode(self.cfg) == "replace":
+                await clear_old_archives(fs, remote_dir, self.ctx)
             before = set(await list_archives(fs, remote_dir))
 
         client, user = self._client()
@@ -105,7 +109,7 @@ class CPanel(SourceType):
             if name is None:  # API2 not available: watch the file instead
                 name = (await wait_new_archive_stable(fs, remote_dir, before, self.ctx, timeout_s)).name
             return [await download_and_delete(fs, remote_dir, name, self.ctx,
-                                              keep_on_host=bool(self.cfg.get("keep_on_host")))]
+                                              keep_on_host=keep_mode(self.cfg) != "no")]
 
     async def _wait_via_api(self, client, user: str, before: set[str], timeout_s: int) -> str | None:
         deadline = time.monotonic() + timeout_s

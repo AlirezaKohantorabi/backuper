@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ntpath
+import time
 from typing import Any
 
 from backuper.fields import BOOL, CHOICE, CREDENTIAL, LIST, UNC, Field
@@ -38,8 +39,11 @@ class SMBFolder(SourceType):
 
     async def _list(self):
         smb = self.ctx.smb(self.cfg["credential"])
+        t0 = time.monotonic()
         files = await asyncio.to_thread(smb.list_files, self.cfg["path"], recursive=True,
                                         exclude=self.cfg.get("exclude") or [])
+        self.ctx.log.info("listed %s: %d file(s), %s in %.0fs", self.cfg["path"], len(files),
+                          human_size(sum(f.size for f in files)), time.monotonic() - t0)
         return smb, files
 
     async def test(self) -> str:

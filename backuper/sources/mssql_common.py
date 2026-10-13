@@ -115,10 +115,14 @@ async def apply_retention(smb: SMB, files: list[RemoteFile], keep_last: int, ctx
     if keep_last <= 0 or len(files) <= keep_last:
         return 0
     deleted = 0
+    ctx.log.info("retention: %d file(s), keeping the newest %d (%s … %s)", len(files), keep_last,
+                 files[0].name, files[keep_last - 1].name)
     for old in files[keep_last:]:
         try:
             await asyncio.to_thread(smb.remove, old.path)
             deleted += 1
+            ctx.log.info("retention: deleted %s (%s)", old.name,
+                         time.strftime("%Y-%m-%d %H:%M", time.localtime(old.mtime)))
         except OSError as e:
             ctx.warn(f"couldn't delete old backup {old.name}: {e}")
     return deleted
