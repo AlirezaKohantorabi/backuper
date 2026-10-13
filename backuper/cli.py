@@ -83,12 +83,10 @@ async def _serve_archive_only(cfg: AppConfig, store: Store) -> None:
 
 
 def cmd_run(args) -> int:
-    """One-off run from the shell (uses the same Telegram bot to upload)."""
-    from backuper.bot.app import make_client
-    from backuper.destinations.telegram import TelegramSender
+    """One-off run from the shell (uploads with the bot if Telegram is configured, else archive-only)."""
     from backuper.engine import Engine
 
-    cfg = load_config(args.env)
+    cfg = load_config(args.env, require_telegram=False)
     setup_logging(cfg)
     store = open_store(cfg)
     ids = None
@@ -102,16 +100,24 @@ def cmd_run(args) -> int:
             ids.append(src.id)
 
     async def main() -> int:
-        client = make_client(cfg)
-        await client.start(bot_token=cfg.bot_token)
-        try:
+        client = None
+        sender = None
+        if cfg.bot_token and cfg.api_id and cfg.api_hash:
+            from backuper.bot.app import make_client
+            from backuper.destinations.telegram import TelegramSender
+
+            client = make_client(cfg)
+            await client.start(bot_token=cfg.bot_token)
             sender = TelegramSender(client, store, lambda: set(cfg.owner_ids) | store.admin_ids())
-            engine = Engine(cfg, store, sender)
-            run_id = await engine.run(ids, trigger="cli")
+        else:
+            print("Telegram not configured: archive-only run", file=sys.stderr)
+        try:
+            run_id = await Engine(cfg, store, sender).run(ids, trigger="cli")
             print(store.get_run(run_id)["summary"])
             return 0 if store.get_run(run_id)["status"] in ("ok", "warning") else 1
         finally:
-            await client.disconnect()
+            if client:
+                await client.disconnect()
 
     return asyncio.run(main())
 
