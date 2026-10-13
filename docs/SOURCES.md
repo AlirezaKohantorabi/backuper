@@ -91,7 +91,12 @@ plus `router-info.txt`.
 
 ## Windows folder (`smb_folder`)
 
-Zips a whole folder from a share, streamed straight into the zip (no temp copy).
+A whole folder from a share, stored as either:
+- **zip** — one AES-256 zip, streamed (no temp copy); can also go to Telegram; or
+- **copy** — a plain folder `<Source>_<1405-07-21_0700>\…` in the archive's date folder, original file dates
+  kept, archive only, not encrypted. When the folder is on the archive's own server the copy is done
+  **inside that server** (SMB server-side copy) — nothing crosses the network. Written as `….partial` and
+  renamed when complete.
 
 - Path like `\\server\Share\Folder` or an admin share `\\server\D$\Folder` (needs an
   administrator account).

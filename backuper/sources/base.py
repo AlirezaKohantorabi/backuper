@@ -10,7 +10,6 @@ The bot builds the add/edit forms from `fields` automatically.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -140,8 +139,3 @@ class SourceType(ABC):
     async def after_success(self, artifacts: list[Artifact]) -> list[str]:
         """Called with the artifacts that were safely stored. Returns notes (e.g. retention)."""
         return []
-
-    # -- helpers for subclasses ------------------------------------------------------
-    @staticmethod
-    async def in_thread(fn, *args, **kwargs):
-        return await asyncio.to_thread(fn, *args, **kwargs)

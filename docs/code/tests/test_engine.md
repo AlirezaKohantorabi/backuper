@@ -1,0 +1,26 @@
+# tests/test_engine.py
+
+End-to-end runs with a fake source type and a fake Telegram sender, against a real (temporary) archive.
+
+| Name | Role / proves |
+|---|---|
+| `FakeSource` | A source type whose config says what to produce (sizes, failure, hold, plain copy). |
+| `FakeSource.collect` / `FakeSource.after_success` | Produce artifacts / record which artifacts reached retention. |
+| `FakeSender` | Records uploads and messages; can fail chosen files. |
+| `FakeSender.__init__` / `FakeSender.topic_title` / `FakeSender.upload_file` / `FakeSender.send_text` / `FakeSender.notify_admins` | Fake sender methods. |
+| `SlowSender` / `SlowSender.__init__` / `SlowSender.upload_file` | Uploads take time; records the maximum number of simultaneous uploads. |
+| `fake_type` | Fixture registering `FakeSource` as type `fake`. |
+| `test_full_run` | Smallest-first upload across sources, AES zips in the Jalali folder, archive retention keeps N date folders and ignores other folders, statuses, retention only for stored data, staging cleaned. |
+| `test_upload_failure_keeps_archive_and_skips_nothing` | Telegram failure → 🟠 partial, retention still runs (archived), Resend works later. |
+| `test_no_archive_and_no_telegram_keeps_zip_locally` | Stored nowhere → ❌, no retention, zip kept in `staging/unsent`. |
+| `test_archive_only_source_streams_into_archive_and_keeps_n` | Archive-only zips never touch staging, aren't uploaded, and "keep N copies" works. |
+| `test_archive_only_without_archive_fails_clearly` | Archive-only without an archive is a clear error. |
+| `test_same_minute_rerun_never_deletes_the_current_copy` | Re-runs in the same minute (same file name) never make retention delete the current copy (real bug found by a test). |
+| `test_collect_skips_backup_that_was_already_stored` | An unchanged newest file is ⏭ skipped; a new one is sent. |
+| `test_collect_retries_upload_next_run_if_telegram_failed` | A file that reached the archive but not Telegram is sent again on the next run. |
+| `test_overlapping_runs_never_upload_at_the_same_time` | Two runs at once: never two uploads at the same time, each run's files stay together and smallest-first. |
+| `test_archive_only_source_does_not_delay_uploads` | A slow archive-only source doesn't hold back the run's uploads. |
+| `test_source_already_running_is_skipped` | A source already running in another run is ⏭ in the second run. |
+| `test_upload_waits_for_upload_from_time` | Without a time no waiting; with one, uploads wait until then. |
+| `test_archive_only_mode_without_telegram` | No Telegram configured → zips go straight to the archive and count as ✅. |
+| `test_copy_format_makes_a_plain_dated_folder` | "Store as: copy" → plain files (not encrypted), original dates kept, not uploaded, no `.partial` left. |

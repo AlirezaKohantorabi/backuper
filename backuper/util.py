@@ -1,15 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import fnmatch
-import logging
 import re
-import time
-from collections.abc import Awaitable, Callable
-from typing import TypeVar
-
-log = logging.getLogger(__name__)
-T = TypeVar("T")
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 
@@ -48,44 +40,6 @@ def hashtag(name: str) -> str:
 def match_any(name: str, patterns: list[str]) -> bool:
     low = name.lower()
     return any(fnmatch.fnmatchcase(low, p.lower()) for p in patterns)
-
-
-async def retry_async(
-    fn: Callable[[], Awaitable[T]],
-    *,
-    attempts: int = 3,
-    base_delay: float = 5.0,
-    what: str = "operation",
-    retry_on: tuple[type[BaseException], ...] = (Exception,),
-) -> T:
-    last: BaseException | None = None
-    for i in range(1, attempts + 1):
-        try:
-            return await fn()
-        except retry_on as e:  # noqa: PERF203
-            last = e
-            if i == attempts:
-                break
-            delay = base_delay * (2 ** (i - 1))
-            log.warning("%s failed (attempt %d/%d): %s - retrying in %.0fs", what, i, attempts, e, delay)
-            await asyncio.sleep(delay)
-    assert last is not None
-    raise last
-
-
-class Throttle:
-    """Lets a call through at most once every `interval` seconds."""
-
-    def __init__(self, interval: float):
-        self.interval = interval
-        self._last = 0.0
-
-    def ready(self, force: bool = False) -> bool:
-        now = time.monotonic()
-        if force or now - self._last >= self.interval:
-            self._last = now
-            return True
-        return False
 
 
 def short_error(e: BaseException, limit: int = 300) -> str:

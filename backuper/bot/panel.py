@@ -13,7 +13,6 @@ from telethon import Button, errors, events
 from backuper import jalali
 from backuper.bot.forms import FormState, prompt, summary
 from backuper.destinations.telegram import TOPICS_KEY, esc
-from backuper.engine import EngineBusy
 from backuper.fields import CREDENTIAL, GROUP, INT, SCHEDULE, SECRET, TEXT, TIME, Field, FieldError, describe_schedule
 from backuper.models import CATEGORY_TITLES, STATUS_ICON
 from backuper.settings import SETTINGS_BY_KEY, SETTINGS_FIELDS
@@ -171,7 +170,7 @@ class Panel:
                 await event.answer()
             except errors.QueryIdInvalidError:
                 pass
-        except (FieldError, SourceError, EngineBusy) as e:
+        except (FieldError, SourceError) as e:
             await event.answer(str(e)[:190], alert=True)
         except Exception as e:  # noqa: BLE001
             log.exception("callback %s failed", data)

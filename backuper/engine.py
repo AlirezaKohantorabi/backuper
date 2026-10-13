@@ -87,10 +87,6 @@ class _Pending:
     stored: list[tuple[Artifact, PackagedFile]] = field(default_factory=list)
 
 
-class EngineBusy(RuntimeError):
-    pass
-
-
 class Engine:
     def __init__(self, cfg: AppConfig, store: Store, sender: TelegramSender | None):
         self.cfg = cfg
