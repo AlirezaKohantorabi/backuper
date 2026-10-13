@@ -9,9 +9,9 @@ from __future__ import annotations
 import logging
 import ntpath
 import shutil
-import stat as statmod
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
 
@@ -25,6 +25,16 @@ log = logging.getLogger(__name__)
 
 COPY_CHUNK = 4 * 1024 * 1024
 SMBError = (OSError, SMBException)
+
+
+_ATTR_DIRECTORY = 0x10
+_ATTR_REPARSE = 0x400
+
+
+def _ts(value) -> float:
+    if isinstance(value, datetime):
+        return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).timestamp()
+    return float(value)
 
 
 @dataclass
@@ -72,14 +82,17 @@ class SMB:
                 entry_rel = f"{rel}\\{name}" if rel else name
                 if exclude and (match_any(name, exclude) or match_any(entry_rel.replace("\\", "/"), exclude)):
                     continue
-                st = entry.stat()
-                if statmod.S_ISDIR(st.st_mode):
-                    if recursive:
+                # Size/date come with the directory listing itself (entry.smb_info); entry.stat()
+                # would cost one extra network round trip per file.
+                info = entry.smb_info
+                if info.file_attributes & _ATTR_DIRECTORY:
+                    if recursive and not info.file_attributes & _ATTR_REPARSE:
                         stack.append((entry.path, entry_rel))
                     continue
                 if patterns and not (match_any(name, patterns) or match_any(entry_rel.replace("\\", "/"), patterns)):
                     continue
-                out.append(RemoteFile(path=entry.path, rel=entry_rel, size=st.st_size, mtime=st.st_mtime))
+                out.append(RemoteFile(path=entry.path, rel=entry_rel, size=info.end_of_file,
+                                      mtime=_ts(info.last_write_time)))
         return out
 
     def list_dirs(self, root: str) -> list[str]:

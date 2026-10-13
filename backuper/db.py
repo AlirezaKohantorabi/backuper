@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS groups (
     name TEXT NOT NULL UNIQUE COLLATE NOCASE,
     schedule TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
+    upload_at TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -94,6 +95,9 @@ class Store:
             self._conn.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)", (str(SCHEMA_VERSION),)
             )
+        cols = {r["name"] for r in self._q("PRAGMA table_info(groups)")}
+        if "upload_at" not in cols:  # databases created before "upload from" existed
+            self._x("ALTER TABLE groups ADD COLUMN upload_at TEXT NOT NULL DEFAULT ''")
         self._migrate_main_schedule()
 
     def _migrate_main_schedule(self) -> None:
@@ -277,7 +281,8 @@ class Store:
     # -- groups -----------------------------------------------------------------
     @staticmethod
     def _grp(r: sqlite3.Row) -> Group:
-        return Group(id=r["id"], name=r["name"], schedule=r["schedule"], enabled=bool(r["enabled"]))
+        return Group(id=r["id"], name=r["name"], schedule=r["schedule"], enabled=bool(r["enabled"]),
+                     upload_at=r["upload_at"] or "")
 
     def list_groups(self) -> list[Group]:
         return [self._grp(r) for r in self._q("SELECT * FROM groups ORDER BY name COLLATE NOCASE")]
@@ -290,17 +295,21 @@ class Store:
         rows = self._q("SELECT * FROM groups WHERE name=?", (name,))
         return self._grp(rows[0]) if rows else None
 
-    def save_group(self, name: str, schedule: str, enabled: bool = True, group_id: int | None = None) -> int:
+    def save_group(self, name: str, schedule: str, enabled: bool = True, group_id: int | None = None,
+                   upload_at: str | None = None) -> int:
+        """Create or update. `upload_at=None` keeps the stored value."""
         now = _now()
         if group_id is None:
             existing = self.get_group_by_name(name)
             group_id = existing.id if existing else None
         if group_id is None:
-            return self._x("INSERT INTO groups(name, schedule, enabled, created_at, updated_at) VALUES(?,?,?,?,?)",
-                           (name, schedule, int(enabled), now, now))
+            return self._x("INSERT INTO groups(name, schedule, enabled, upload_at, created_at, updated_at) "
+                           "VALUES(?,?,?,?,?,?)", (name, schedule, int(enabled), upload_at or "", now, now))
         old = self.get_group(group_id)
-        self._x("UPDATE groups SET name=?, schedule=?, enabled=?, updated_at=? WHERE id=?",
-                (name, schedule, int(enabled), now, group_id))
+        if upload_at is None:
+            upload_at = old.upload_at if old else ""
+        self._x("UPDATE groups SET name=?, schedule=?, enabled=?, upload_at=?, updated_at=? WHERE id=?",
+                (name, schedule, int(enabled), upload_at, now, group_id))
         if old and old.name != name:
             self._set_group_refs(old.name, name)
         return group_id

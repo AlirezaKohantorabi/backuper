@@ -6,6 +6,8 @@
   it backs up all its sources, then uploads their files to Telegram **smallest first, one after
   another**. You never have to space times out: the last file may go out at 10:00 — that's
   decided by the sizes, not by you.
+- **Upload from** (optional, per group) — e.g. start backing up at 06:00 but don't upload to
+  Telegram before 08:00. ▶️ *Run now* always uploads right away.
 - **Own time** — a source without a group can run by itself, e.g. 19:00.
 - No group and no own time = manual only (▶️ Run now).
 - Runs may overlap (a 19:00 source while the 08:00 group is still uploading), but **two files
@@ -115,6 +117,8 @@ after* turns it into a "move" (e.g. for servers that drop their own dumps somewh
 - The FTP account must start in the **home folder** (`/home/<user>`), not `public_html/...`:
   that's where cPanel writes the backup. (An existing account's folder can't be changed in
   cPanel — delete and recreate it with `/` as directory.)
+- *Keep newest backup on the host*: leaves this run's archive on the hosting account as an extra
+  copy and deletes older ones there. Off (default) = nothing stays on the host.
 - *Download host*: shared hosts often have an FTP certificate for the server's own name
   (e.g. `box402.parsvds.com`); put it here to keep certificate checks on.
 

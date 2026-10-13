@@ -37,6 +37,7 @@ class Group:
     name: str
     schedule: str
     enabled: bool = True
+    upload_at: str = ""  # "HH:MM": scheduled runs don't start uploading before this time
 
 
 @dataclass

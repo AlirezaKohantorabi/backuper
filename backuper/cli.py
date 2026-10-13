@@ -48,17 +48,38 @@ def cmd_gen_key(_args) -> int:
 
 
 def cmd_serve(args) -> int:
-    from backuper.bot.app import BotApp
-
-    cfg = load_config(args.env)
+    cfg = load_config(args.env, require_telegram=False)
     setup_logging(cfg)
     store = open_store(cfg)
     log.info("Backuper %s starting (data: %s)", __version__, cfg.data_dir)
     try:
-        asyncio.run(BotApp(cfg, store).run())
+        if cfg.bot_token and cfg.api_id and cfg.api_hash:
+            from backuper.bot.app import BotApp
+
+            asyncio.run(BotApp(cfg, store).run())
+        else:
+            asyncio.run(_serve_archive_only(cfg, store))
     except KeyboardInterrupt:
         pass
     return 0
+
+
+async def _serve_archive_only(cfg: AppConfig, store: Store) -> None:
+    """No Telegram configured yet: still run the schedules and fill the archive."""
+    from backuper.engine import Engine
+    from backuper.scheduler import Scheduler
+
+    log.warning("BOT_TOKEN/API_ID/API_HASH not all set — running ARCHIVE-ONLY: schedules run and zips go to "
+                "the archive, but nothing is uploaded and there is no admin panel. Fill .env and restart to "
+                "enable Telegram.")
+    engine = Engine(cfg, store, None)
+    engine.startup_cleanup()
+    scheduler = Scheduler(engine, store, cfg.timezone)
+    scheduler.start()
+    try:
+        await asyncio.Event().wait()
+    finally:
+        scheduler.shutdown()
 
 
 def cmd_run(args) -> int:
@@ -165,7 +186,7 @@ def cmd_import(args) -> int:
         except FieldError as e:
             errors.append(f"settings.{key}: {e}")
 
-    from backuper.fields import parse_schedule
+    from backuper.fields import TIME, Field, parse_schedule
 
     group_names = {g.name.lower() for g in store.list_groups()}
     for g in doc.get("groups") or []:
@@ -173,9 +194,10 @@ def cmd_import(args) -> int:
             if not g.get("name") or not g.get("schedule"):
                 raise FieldError("needs 'name' and 'schedule'")
             schedule = parse_schedule(str(g["schedule"]))
+            upload_at = Field("upload_at", "upload_at", TIME, required=False, default="").parse(g.get("upload_at"))
             group_names.add(g["name"].lower())
             if not args.dry_run:
-                store.save_group(g["name"], schedule, enabled=bool(g.get("enabled", True)))
+                store.save_group(g["name"], schedule, enabled=bool(g.get("enabled", True)), upload_at=upload_at)
         except FieldError as e:
             errors.append(f"groups.{g.get('name', '?')}: {e}")
 
@@ -239,7 +261,8 @@ def cmd_export(args) -> int:
     doc = {
         "settings": {k: v for k, v in store.all_settings().items()
                      if not SETTINGS_BY_KEY[k].secret and k != "chat_id"},
-        "groups": [{"name": g.name, "schedule": g.schedule, "enabled": g.enabled} for g in store.list_groups()],
+        "groups": [{"name": g.name, "schedule": g.schedule, "upload_at": g.upload_at, "enabled": g.enabled}
+                   for g in store.list_groups()],
         "credentials": [{"name": c.name, "username": c.username, "password": "", "note": c.note}
                         for c in store.list_credentials()],
         "sources": [],

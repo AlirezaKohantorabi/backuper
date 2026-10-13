@@ -30,6 +30,7 @@ class PlannedJob:
     cron: str
     label: str            # "group Daily" / source name
     source_ids: list[int]
+    upload_at: str = ""   # groups only: "HH:MM" uploads don't start before
 
 
 class Scheduler:
@@ -66,7 +67,7 @@ class Scheduler:
                 continue
             for cron in [c for c in (g.schedule or "").split(";") if c]:
                 key = f"group:{g.id}:{cron}"
-                jobs[key] = PlannedJob(key, cron, f"group {g.name}", members[g.id])
+                jobs[key] = PlannedJob(key, cron, f"group {g.name}", members[g.id], g.upload_at)
         return jobs
 
     def reload(self) -> None:
@@ -83,7 +84,8 @@ class Scheduler:
     async def _fire(self, key: str) -> None:
         job = self.plan().get(key)  # re-read: membership may have changed since loading
         if job and job.source_ids:
-            await self.engine.run(job.source_ids, trigger=f"{job.label} · {describe_schedule(job.cron)}")
+            await self.engine.run(job.source_ids, trigger=f"{job.label} · {describe_schedule(job.cron)}",
+                                  upload_from=job.upload_at)
 
     def next_runs(self) -> list[tuple[datetime, str, int]]:
         """[(next time, label, number of sources)], soonest first."""

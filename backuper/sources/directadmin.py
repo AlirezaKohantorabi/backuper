@@ -66,7 +66,10 @@ class DirectAdmin(SourceType):
         async with open_transfer(self.ctx, self.cfg, self.cfg["credential"]) as fs:
             pin_transfer_key(self.ctx, fs)
             existing = await list_archives(fs, self.cfg.get("remote_dir") or "/backups")
-        note = f" ⚠️ {len(existing)} old backup archive(s) are sitting on the host." if existing else ""
+        if self.cfg.get("keep_on_host"):
+            note = f" {len(existing)} backup(s) kept on the host (newest is kept by design)." if existing else ""
+        else:
+            note = f" ⚠️ {len(existing)} old backup archive(s) are sitting on the host." if existing else ""
         return f"DirectAdmin login OK (domains: {', '.join(domains) or '?'}). Download login OK.{note}"
 
     async def collect(self) -> list[Artifact]:
@@ -81,4 +84,5 @@ class DirectAdmin(SourceType):
             self._parse(await client.post("/CMD_API_SITE_BACKUP", data=form), "create backup")
             self.ctx.log.info("DirectAdmin backup queued on %s", self.cfg["host"])
             entry = await wait_new_archive_stable(fs, remote_dir, before, self.ctx, timeout_s)
-            return [await download_and_delete(fs, remote_dir, entry.name, self.ctx)]
+            return [await download_and_delete(fs, remote_dir, entry.name, self.ctx,
+                                              keep_on_host=bool(self.cfg.get("keep_on_host")))]

@@ -80,7 +80,10 @@ class CPanel(SourceType):
         async with open_transfer(self.ctx, self.cfg, self.cfg["credential"]) as fs:
             pin_transfer_key(self.ctx, fs)
             existing = await list_archives(fs, self.cfg.get("remote_dir") or "/")
-        note = f" ⚠️ {len(existing)} old backup archive(s) are sitting on the host." if existing else ""
+        if self.cfg.get("keep_on_host"):
+            note = f" {len(existing)} backup(s) kept on the host (newest is kept by design)." if existing else ""
+        else:
+            note = f" ⚠️ {len(existing)} old backup archive(s) are sitting on the host." if existing else ""
         return f"cPanel API OK, {self.cfg.get('transfer', 'ftps').upper()} login OK.{note}"
 
     async def collect(self) -> list[Artifact]:
@@ -101,7 +104,8 @@ class CPanel(SourceType):
         async with open_transfer(self.ctx, self.cfg, self.cfg["credential"]) as fs:
             if name is None:  # API2 not available: watch the file instead
                 name = (await wait_new_archive_stable(fs, remote_dir, before, self.ctx, timeout_s)).name
-            return [await download_and_delete(fs, remote_dir, name, self.ctx)]
+            return [await download_and_delete(fs, remote_dir, name, self.ctx,
+                                              keep_on_host=bool(self.cfg.get("keep_on_host")))]
 
     async def _wait_via_api(self, client, user: str, before: set[str], timeout_s: int) -> str | None:
         deadline = time.monotonic() + timeout_s

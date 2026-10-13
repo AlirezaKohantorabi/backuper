@@ -336,3 +336,38 @@ async def test_source_already_running_is_skipped(cfg, store):
     await first
     FakeSource.gate = None
     assert not engine.busy
+
+
+async def test_upload_waits_for_upload_from_time(cfg, store, monkeypatch):
+    from datetime import datetime, timedelta
+
+    store.create_source("DB", "fake", {"sizes": [100]}, set())
+    sender = FakeSender()
+    engine = Engine(cfg, store, sender)
+    soon = datetime.now(cfg.timezone) + timedelta(seconds=1.2)
+    waited = []
+    real_sleep = asyncio.sleep
+
+    async def fast_sleep(sec):
+        waited.append(sec)
+        await real_sleep(min(sec, 0.3))
+    monkeypatch.setattr("backuper.engine.asyncio.sleep", fast_sleep)
+    await engine.run(trigger="group", upload_from="")
+    assert sender.uploads and not waited                      # no upload time -> no waiting
+    target = engine._next_time(soon.strftime("%H:%M"))
+    assert target is not None and timedelta(0) <= target - datetime.now(cfg.timezone) <= timedelta(days=1)
+    sender.uploads.clear()
+    monkeypatch.setattr(engine, "_next_time", lambda hhmm: soon)
+    await engine.run(trigger="group", upload_from="08:00")
+    assert waited and sender.uploads                           # waited, then uploaded
+    assert datetime.now(cfg.timezone) >= soon
+
+
+async def test_archive_only_mode_without_telegram(cfg, store, tmp_path):
+    """Before Telegram is configured, runs still fill the archive and count as OK."""
+    store.set_setting("archive_path", str(tmp_path / "arch"))
+    store.create_source("DB", "fake", {"sizes": [1000]}, set())
+    run_id = await Engine(cfg, store, None).run(trigger="t")
+    item = store.run_items(run_id)[0]
+    assert item["status"] == OK and len(list((tmp_path / "arch").rglob("DB_*.zip"))) == 1
+    assert not list(cfg.staging_dir.rglob("DB_*.zip"))  # streamed straight into the archive

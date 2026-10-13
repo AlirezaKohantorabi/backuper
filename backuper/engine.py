@@ -20,6 +20,7 @@ import shutil
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import jdatetime
@@ -123,8 +124,11 @@ class Engine:
 
     # -- public API --------------------------------------------------------------------
     async def run(self, source_ids: list[int] | None = None, trigger: str = "manual",
-                  on_progress: ProgressCallback | None = None) -> int:
-        """Run the given sources (None = every enabled source). Returns the run id."""
+                  on_progress: ProgressCallback | None = None, upload_from: str = "") -> int:
+        """Run the given sources (None = every enabled source). Returns the run id.
+
+        upload_from "HH:MM": don't start uploading before the next occurrence of that time
+        (used by groups with an "Upload from" time; manual runs upload right away)."""
         tz = self.cfg.timezone
         now = jalali.now_jalali(tz)
         folder = jalali.folder_name(now, FOLDER_FORMATS.get(self.store.get_setting("folder_format"), "%Y-%m-%d"))
@@ -138,6 +142,7 @@ class Engine:
             results.append(ItemResult(source_id=src.id, source_name=src.name, status=SKIPPED,
                                       message=f"already running in run #{self._active[src.id]}"))
         sources = [s for s in sources if s.id not in self._active]
+        upload_not_before = self._next_time(upload_from) if upload_from else None
         for src in sources:
             self._active[src.id] = run_id
         run_dir = self.cfg.staging_dir / f"run-{run_id}"
@@ -161,6 +166,7 @@ class Engine:
             # Archive-only sources (e.g. huge folders) keep zipping meanwhile.
             tg = [tasks[s.id] for s in sources if s.config.get("telegram", True)]
             tg_results = list(await asyncio.gather(*tg))
+            await self._wait_until(upload_not_before, prog)
             if self._upload_lock.locked():
                 prog.phase = "waiting for another run's uploads"
             async with self._upload_lock:
@@ -224,6 +230,26 @@ class Engine:
         log.info("Run #%d finished: %s in %s", run_id, status, human_duration(duration))
         return run_id
 
+    def _next_time(self, hhmm: str) -> datetime | None:
+        """Next occurrence of HH:MM from now (today if still ahead, else tomorrow)."""
+        try:
+            h, m = (int(x) for x in hhmm.split(":"))
+        except ValueError:
+            return None
+        now = datetime.now(self.cfg.timezone)
+        target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        return target if target > now else target + timedelta(days=1)
+
+    async def _wait_until(self, when: datetime | None, prog: RunProgress) -> None:
+        if when is None:
+            return
+        while True:
+            left = (when - datetime.now(self.cfg.timezone)).total_seconds()
+            if left <= 0:
+                return
+            prog.phase = f"ready — uploads start at {when:%H:%M}"
+            await asyncio.sleep(min(left, 30))
+
     # -- phase 1 -----------------------------------------------------------------------
     async def _process_source(self, src: SourceRecord, now: jdatetime.datetime, folder: str, run_dir: Path,
                               sem: asyncio.Semaphore, prog: RunProgress, pending: dict[int, _Pending]) -> ItemResult:
@@ -250,7 +276,7 @@ class Engine:
                     res.status, res.message = SKIPPED, "; ".join(ctx.notes)
                     sp.phase = "nothing new"
                 else:
-                    res.warnings.extend(f"skipped: {n}" for n in ctx.notes)
+                    res.warnings.extend(f"note: {n}" for n in ctx.notes)
             except SourceError as e:
                 res.status, res.message = FAILED, str(e)
                 sp.phase = "failed"
@@ -269,7 +295,8 @@ class Engine:
             parts.append(safe_filename(art.label))
         parts.append(ctx.stamp)
         file_name = "_".join(parts) + ".zip"
-        send_tg = bool(src.config.get("telegram", True))
+        # Without Telegram configured (archive-only mode) every zip goes straight to the archive.
+        send_tg = bool(src.config.get("telegram", True)) and self.sender is not None
         zip_opts = {
             "password": self.store.get_setting("zip_password") or "",
             "level": int(self.store.get_setting("compression_level") or 6),
@@ -400,7 +427,7 @@ class Engine:
                 except Exception as e:  # noqa: BLE001
                     log.exception("retention for %s failed", res.source_name)
                     res.warnings.append(f"retention failed: {short_error(e)}")
-        if res.status == OK and any(not w.startswith(("retention:", "deleted ", "skipped:")) for w in res.warnings):
+        if res.status == OK and any(not w.startswith(("retention:", "deleted ", "note:")) for w in res.warnings):
             res.status = WARNING
 
     async def _prune_source_archive(self, pend: _Pending, res: ItemResult) -> None:

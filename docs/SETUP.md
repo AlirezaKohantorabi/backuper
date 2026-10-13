@@ -27,6 +27,9 @@ sudo systemctl restart backuper
 journalctl -u backuper -f
 ```
 
+- Without `BOT_TOKEN`/`API_ID`/`API_HASH` the service runs **archive-only**: schedules run and
+  zips go to the archive, but nothing is uploaded and there's no admin panel (manage it with the
+  CLI: `backuper import`, `credential`, `set`, `test`, `list`). Fill `.env` + restart to enable Telegram.
 - Set the server clock right (`timedatectl`): schedules use `TIMEZONE` from `.env`
   (default `Asia/Tehran`) and the archive folders are Jalali dates.
 - If Telegram is only reachable through a proxy, set `TG_PROXY` in `.env`.

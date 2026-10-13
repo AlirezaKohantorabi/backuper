@@ -14,8 +14,8 @@ from typing import Any
 
 from apscheduler.triggers.cron import CronTrigger
 
-TEXT, INT, BOOL, CHOICE, LIST, SECRET, CREDENTIAL, SCHEDULE, UNC, HOST, GROUP = (
-    "text", "int", "bool", "choice", "list", "secret", "credential", "schedule", "unc", "host", "group",
+TEXT, INT, BOOL, CHOICE, LIST, SECRET, CREDENTIAL, SCHEDULE, UNC, HOST, GROUP, TIME = (
+    "text", "int", "bool", "choice", "list", "secret", "credential", "schedule", "unc", "host", "group", "time",
 )
 
 _TRUE = {"1", "y", "yes", "true", "on", "بله", "آره"}
@@ -103,6 +103,11 @@ class Field:
             return items
         if k == SCHEDULE:
             return parse_schedule(str(raw))
+        if k == TIME:
+            m = _TIME_RE.match(str(raw).strip())
+            if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+                raise FieldError(f"{self.label}: use HH:MM, e.g. 08:00")
+            return f"{int(m.group(1)):02d}:{int(m.group(2)):02d}"
         if k == UNC:
             return normalize_unc(str(raw))
         if k == HOST:

@@ -26,6 +26,9 @@ TRANSFER_FIELDS = [
           help="FTP/SFTP login. Empty = same as the panel login (only works with password auth)."),
     Field("verify_tls", "Verify TLS certificates", BOOL, default=True,
           help="Turn off only for hosts with self-signed certificates."),
+    Field("keep_on_host", "Keep newest backup on the host", BOOL, default=False,
+          help="Leave this run's backup on the hosting account as an extra copy (older backup archives there are "
+               "deleted). Off = nothing stays on the host. Needs room for two backups during a run."),
     Field("timeout_minutes", "Timeout (minutes)", INT, default=180, min=5, max=24 * 60),
 ]
 
@@ -75,16 +78,30 @@ async def wait_new_archive_stable(fs: RemoteFS, remote_dir: str, before: set[str
     raise SourceError(f"the panel didn't produce a finished backup within {timeout_s // 60} min")
 
 
-async def download_and_delete(fs: RemoteFS, remote_dir: str, name: str, ctx: RunContext) -> Artifact:
+async def download_and_delete(fs: RemoteFS, remote_dir: str, name: str, ctx: RunContext,
+                              keep_on_host: bool = False) -> Artifact:
+    """Download the new archive. Then either delete it from the host (default), or keep it as the
+    single copy on the host and delete every older backup archive there."""
     remote = posixpath.join(remote_dir, name)
     local = ctx.workdir / name
     ctx.log.info("downloading %s", remote)
-    try:
+    if keep_on_host:
         await fs.download(remote, local)
-    finally:
-        # The archive must never stay on the hosting account, even if the download failed.
+        for old in await list_archives(fs, remote_dir):
+            if old == name:
+                continue
+            try:
+                await fs.remove(posixpath.join(remote_dir, old))
+                ctx.note(f"deleted older backup {old} from the host")
+            except Exception as e:  # noqa: BLE001
+                ctx.warn(f"couldn't delete older backup {old} from the host: {e}")
+    else:
         try:
-            await fs.remove(remote)
-        except Exception as e:  # noqa: BLE001
-            ctx.warn(f"couldn't delete {remote} from the host — delete it manually: {e}")
+            await fs.download(remote, local)
+        finally:
+            # Nothing may stay on the hosting account, even if the download failed.
+            try:
+                await fs.remove(remote)
+            except Exception as e:  # noqa: BLE001
+                ctx.warn(f"couldn't delete {remote} from the host — delete it manually: {e}")
     return Artifact(label="", entries=[Entry.from_path(local, compress=False)], cleanup=[local])

@@ -14,7 +14,7 @@ from backuper import jalali
 from backuper.bot.forms import FormState, prompt, summary
 from backuper.destinations.telegram import TOPICS_KEY, esc
 from backuper.engine import EngineBusy
-from backuper.fields import CREDENTIAL, GROUP, INT, SCHEDULE, SECRET, TEXT, Field, FieldError, describe_schedule
+from backuper.fields import CREDENTIAL, GROUP, INT, SCHEDULE, SECRET, TEXT, TIME, Field, FieldError, describe_schedule
 from backuper.models import CATEGORY_TITLES, STATUS_ICON
 from backuper.settings import SETTINGS_BY_KEY, SETTINGS_FIELDS
 from backuper.sources import REGISTRY, RunContext, SourceError, credential_keys_by_type, get_type
@@ -44,6 +44,10 @@ GROUP_FIELDS = [
           help="When the group starts. All its sources are backed up, then their files go to Telegram smallest "
                "first, one at a time — no need to space anything out. Several times: 08:00, 20:00. "
                "Other days: cron lines like '0 8 * * 6' (Saturdays)."),
+    Field("upload_at", "Upload from", TIME, required=False, default="", example="08:00",
+          help="Optional. Backups start at the start time, but uploading to Telegram waits until this time "
+               "(e.g. back up at 06:00, upload from 08:00). Empty = upload as soon as the backups are ready. "
+               "▶️ Run now always uploads right away."),
 ]
 ADMIN_FIELDS = [
     Field("user_id", "Telegram user ID", INT, min=1, help="They can get it by sending /id to this bot."),
@@ -600,7 +604,8 @@ class Panel:
         rows = []
         for g in self.store.list_groups():
             n = len(self.store.group_members(g.name))
-            label = f"{'🗂' if g.enabled else '⏸'} {g.name} · {describe_schedule(g.schedule)} · {n} sources"
+            up = f" · ⬆{g.upload_at}" if g.upload_at else ""
+            label = f"{'🗂' if g.enabled else '⏸'} {g.name} · {describe_schedule(g.schedule)}{up} · {n} sources"
             rows.append([Button.inline(label[:60], f"gv:{g.id}".encode())])
         rows.append([Button.inline("➕ New group", b"ga"), *BACK_MAIN])
         text = ("🗂 <b>Backup groups</b>\n\nA group starts at its time, backs up all its sources, then uploads "
@@ -614,7 +619,8 @@ class Panel:
             return
         members = self.store.group_members(g.name)
         lines = [f"🗂 <b>{esc(g.name)}</b> — {'✅ enabled' if g.enabled else '⏸ disabled'}",
-                 f"⏰ {esc(describe_schedule(g.schedule))}", ""]
+                 f"⏰ starts {esc(describe_schedule(g.schedule))}",
+                 f"📤 uploads {'from ' + g.upload_at if g.upload_at else 'as soon as backups are ready'}", ""]
         if members:
             lines.append(f"Sources ({len(members)}):")
             lines += [f"• {'' if m.enabled else '⏸ '}{esc(m.name)}" for m in members]
@@ -623,8 +629,9 @@ class Panel:
         rows = [
             [Button.inline("▶️ Run group now", f"gr:{gid}".encode()),
              Button.inline("📦 Sources in group", f"gm:{gid}".encode())],
-            [Button.inline("⏰ Change time", f"ge:{gid}:schedule".encode()),
-             Button.inline("🏷 Rename", f"ge:{gid}:name".encode())],
+            [Button.inline("⏰ Start time", f"ge:{gid}:schedule".encode()),
+             Button.inline("📤 Upload from", f"ge:{gid}:upload_at".encode())],
+            [Button.inline("🏷 Rename", f"ge:{gid}:name".encode())],
             [Button.inline("⏸ Disable" if g.enabled else "▶️ Enable", f"gx:{gid}".encode()),
              Button.inline("🗑 Delete", f"gd:{gid}".encode())],
             [Button.inline("⬅️ Groups", b"gl"), *BACK_MAIN],
@@ -673,7 +680,8 @@ class Panel:
             return
         f = next(f for f in GROUP_FIELDS if f.key == key)
         await self.start_form(event, FormState("group_edit", f"🗂 {g.name}", [f], editing=True, target=g.id,
-                                               current={"name": g.name, "schedule": g.schedule}))
+                                               current={"name": g.name, "schedule": g.schedule,
+                                                        "upload_at": g.upload_at}))
 
     async def run_group(self, event, gid: int) -> None:
         g = self.store.get_group(gid)
@@ -960,12 +968,13 @@ class Panel:
                 self.store.set_json(TOPICS_KEY, {})
             await self.show_settings(event)
         elif kind == "group_add":
-            gid = self.store.save_group(vals["name"], vals["schedule"])
+            gid = self.store.save_group(vals["name"], vals["schedule"], upload_at=vals.get("upload_at") or "")
             self.app.scheduler.reload()
             await self.show_group_members(event, gid)
         elif kind == "group_edit":
             g = self.store.get_group(state.target)
-            self.store.save_group(vals.get("name", g.name), vals.get("schedule", g.schedule), g.enabled, group_id=g.id)
+            self.store.save_group(vals.get("name", g.name), vals.get("schedule", g.schedule), g.enabled, group_id=g.id,
+                                  upload_at=vals.get("upload_at"))
             self.app.scheduler.reload()
             await self.show_group(event, g.id)
         elif kind == "admin_add":

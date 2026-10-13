@@ -188,9 +188,15 @@ async def test_full_admin_flow(panel, store):
     await press(panel, "gl")
     await press(panel, "ga")
     await say(panel, "Daily")
-    ev = await say(panel, "08:00")
+    await say(panel, "08:00")
+    bad = await say(panel, "8 o'clock")            # upload-from must be HH:MM
+    assert "HH:MM" in bad.responses[0]
+    await press(panel, "f:clr")                    # no upload-from time
     group = store.get_group_by_name("Daily")
-    assert group.schedule == "0 8 * * *"
+    assert group.schedule == "0 8 * * *" and group.upload_at == ""
+    await press(panel, f"ge:{group.id}:upload_at")
+    await say(panel, "9:15")
+    assert store.get_group(group.id).upload_at == "09:15"
     await press(panel, f"gmt:{group.id}:{src.id}")
     assert store.get_source(src.id).config["group"] == "Daily"
     ev = await press(panel, f"gv:{group.id}")
