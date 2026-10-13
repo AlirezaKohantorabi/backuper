@@ -86,12 +86,22 @@ class MikroTik(SourceType):
         conn = await self._connect()
         try:
             info = await self._info(conn)
+            clock = parse_print(await ros(conn, "/system clock print"))
+            try:
+                ntp = parse_print(await ros(conn, "/system ntp client print"))
+            except RuntimeError:
+                ntp = {}
             sftp = await conn.start_sftp_client()
             sftp.exit()
         finally:
             conn.close()
+        ntp_state = ntp.get("enabled", "?")
+        if ntp.get("status"):
+            ntp_state += f" ({ntp['status']})"
         return (f"Connected: {info.get('identity') or '?'} — {info.get('board-name', '?')}, "
-                f"RouterOS {info.get('version', '?')}, uptime {info.get('uptime', '?')}. SFTP OK.")
+                f"RouterOS {info.get('version', '?')}, uptime {info.get('uptime', '?')}. SFTP OK.\n"
+                f"Router clock: {clock.get('date', '?')} {clock.get('time', '?')} "
+                f"({clock.get('time-zone-name', '?')}), NTP client enabled: {ntp_state}")
 
     async def collect(self) -> list[Artifact]:
         if not self.cfg.get("export", True) and not self.cfg.get("backup", True):

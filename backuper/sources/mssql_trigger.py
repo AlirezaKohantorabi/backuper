@@ -44,8 +44,9 @@ class MSSQLTrigger(SourceType):
         Field("share_credential", "Share credential", CREDENTIAL),
         Field("copy_only", "COPY_ONLY", BOOL, default=True,
               help="Recommended: doesn't disturb differential/log backup chains."),
-        Field("compression", "SQL compression", BOOL, default=False,
-              help="WITH COMPRESSION — not supported on Express edition."),
+        Field("compression", "SQL backup compression", CHOICE, default="auto", choices=("auto", "on", "off"),
+              help="auto = on where the edition supports it (Enterprise/Standard/Developer), off on Express. "
+                   "Compressed backups are ~5x smaller and faster to copy."),
         Field("keep_last", "Keep last N on server", INT, default=7, min=0, max=1000,
               help="Old backups are deleted beyond N per database. 0 = never delete."),
         Field("retention_scope", "Keep last N counts", CHOICE, default="mine", choices=("mine", "all"),
@@ -109,12 +110,25 @@ class MSSQLTrigger(SourceType):
         with self._connect() as conn:
             return self._resolve_dbs(conn)
 
+    def _compress(self, conn) -> bool:
+        mode = self.cfg.get("compression", "auto")
+        if mode is True or mode == "on":
+            return True
+        if mode == "off":
+            return False
+        # "auto" (and False, the old default): only where the edition supports backup compression
+        cur = conn.cursor()
+        cur.execute("SELECT CAST(SERVERPROPERTY('Edition') AS nvarchar(128))")
+        edition = (cur.fetchone()[0] or "").lower()
+        return any(e in edition for e in ("enterprise", "standard", "developer", "business intelligence"))
+
     def _backup_sync(self, db: str, server_path: str) -> None:
         opts = ["INIT", "CHECKSUM", "STATS = 25"]
         if self.cfg.get("copy_only", True):
             opts.append("COPY_ONLY")
-        if self.cfg.get("compression"):
-            opts.append("COMPRESSION")
+        with self._connect() as conn:
+            if self._compress(conn):
+                opts.append("COMPRESSION")
         sql = f"BACKUP DATABASE {quote_ident(db)} TO DISK = %s WITH {', '.join(opts)}"
         with self._connect() as conn:
             cur = conn.cursor()
@@ -133,13 +147,14 @@ class MSSQLTrigger(SourceType):
                 cur.execute("SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(64)), "
                             "CAST(SERVERPROPERTY('Edition') AS nvarchar(128))")
                 ver, edition = cur.fetchone()
-                return ver, edition, self._list_dbs(conn), self._resolve_dbs(conn)
-        ver, edition, all_dbs, chosen = await asyncio.to_thread(probe)
+                return ver, edition, self._list_dbs(conn), self._resolve_dbs(conn), self._compress(conn)
+        ver, edition, all_dbs, chosen, compress = await asyncio.to_thread(probe)
         smb = self.ctx.smb(self.cfg["share_credential"])
         await asyncio.to_thread(smb.list_files, self.cfg["share"])
         user_dbs = [d for d in all_dbs if d.lower() not in SYSTEM_DBS]
         return (f"SQL Server {ver} ({edition}).\nUser databases: {', '.join(user_dbs) or '—'}\n"
-                f"Will back up: {', '.join(chosen)}\nShare {self.cfg['share']} is readable.")
+                f"Will back up: {', '.join(chosen)} (backup compression: {'on' if compress else 'off'})\n"
+                f"Share {self.cfg['share']} is readable.")
 
     async def collect(self) -> list[Artifact]:
         dbs = await asyncio.to_thread(self._resolve_dbs_sync)

@@ -21,6 +21,10 @@
   .\setup-backuper-access.ps1 -Path 'C:\Arpa\Auto Backup' -Name 'Arpa' -User 'HARMONIC\BackuperBot' -SqlBackups -OpenSqlPort
 
 .EXAMPLE
+  # Existing share: just grant read access to whatever folder it points to
+  .\setup-backuper-access.ps1 -Name 'Edari' -User 'HARMONIC\BackuperBot' -ReadOnly
+
+.EXAMPLE
   # File server 192.168.10.35 — archive (write) and two read-only folders
   .\setup-backuper-access.ps1 -Path 'E:\Backuper' -Name 'Backuper$'
   .\setup-backuper-access.ps1 -Path 'D:\Edari'    -Name 'Edari$'   -ReadOnly
@@ -28,7 +32,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)] [string] $Path,
+    [string] $Path,                                     # optional for an existing share: its folder is used
     [Parameter(Mandatory)] [string] $Name,
     [string] $User = 'backuper',
     [switch] $ReadOnly,
@@ -74,6 +78,11 @@ if ($User.Contains('\') -or $User.Contains('@')) {
 }
 
 # ---- 2. folder + share -------------------------------------------------------------
+if (-not $Path) {
+    $existing = Get-SmbShare -Name $Name -ErrorAction SilentlyContinue
+    if (-not $existing) { throw "Share $Name doesn't exist - give -Path to create it" }
+    $Path = $existing.Path
+}
 if (-not (Test-Path -LiteralPath $Path)) {
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
     Write-Host "Created folder $Path"

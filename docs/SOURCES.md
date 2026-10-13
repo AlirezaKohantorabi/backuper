@@ -68,6 +68,8 @@ Express; "Run now" in the bot produces a fresh backup.
 - *Keep last N counts*: `mine` (default) only deletes files this source created
   (`<db>_<date>_<time>.bak`); `all` also prunes the application's own backups of that database
   in the folder (every `<db>_*.bak`).
+- *SQL backup compression* `auto` (default): on for Enterprise/Standard/Developer (≈5× smaller,
+  much faster to copy), off on Express which doesn't support it.
 - Named instances: set *Instance name* (port found via SQL Browser, UDP 1434).
 - Very old servers (SQL 2008 / 2012 without TLS 1.2): set *Connection encryption* = `off`.
 
