@@ -127,6 +127,7 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 | SMB: 10 threads × 384 MB, one connection each (1.7) | 0 errors, 3.8 GB in 39 s (~100 MB/s) |
 | Listing Finance after the rights fix | 184,495 files, 167.5 GB in 209 s (was 11,759 files / 13.3 GB visible) |
 | Folder copy, one file at a time (same server) | ~1,250 files/min, ~1 GB/min per copy |
+| Folder copy, 4 workers (1.7) — Edari | 30,324 files, 21.0 GB in 7 min 49 s (~3,900 files/min, 45.7 MB/s), 0 skipped |
 
 ## 6. What worked well
 
@@ -165,7 +166,10 @@ icacls (Get-SmbShare -Name 'Edari').Path /grant "${bot}:(OI)(CI)RX"
 
 - **Finance really is 167 GB** (184,495 files): after `icacls D:\Finance /grant …:(OI)(CI)RX /T` the bot
   sees everything. Folders with inheritance turned off had hidden most of it.
-- **The HS (Hamrahan System) backup shares on .250/.251 are readable — and writable — by any domain user:**
+- **A dead file can look freshly modified:** two leftovers of the failed run showed a modified time equal to the
+  moment the old process exited (Windows closes orphaned handles then), and the file server's clock is 9 minutes
+  slow — so the 15-minute "maybe still being written" guard kept them until the next start.
+- **The HS (Hamrahan System) backup folders on .250/.251 give *Everyone: Full control* (NTFS):**
   the bot reached them with its plain domain account and no setup on those servers. Worth restricting.
 
 ## Open items at the time of writing (2026-10-14)
