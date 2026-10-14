@@ -26,6 +26,14 @@ connection *is* shared by several threads:
 `copy_stream` and `download` also check that every byte of the source arrived
 ([`check_complete`](../util.md)).
 
+**Resumable reads (1.7.1).** `open_read` returns a reader that survives a dropped connection: it closes the
+client's connections, waits (`READ_RESUME_WAITS`: 10 s, 30 s, 1, 2, 3, 5, 5, 5 min), reopens the file and
+continues **at the same byte** — only if the file's size and date are unchanged. On 2026-10-14 the link to the
+172.16.3.x site went down for ~17 minutes while an 11.3 GB backup was 98 % read; the retry then started again
+from zero. Tested for real: cutting the connection at 300 MB of a 932 MB file → reconnected after 10 s,
+identical SHA-256. A connection that receives nothing for **2 minutes** is now declared dead (the library's
+default was 10 minutes), and the credit guard no longer waits on a connection that is already dead.
+
 ## Performance notes (measured on the first site)
 
 - Listing uses the metadata that comes **with** the directory listing (`entry.smb_info`). Calling
@@ -39,6 +47,15 @@ connection *is* shared by several threads:
 | `log`, `COPY_CHUNK`, `SMBError` | Logger, 4 MB I/O size, the exceptions an SMB call can raise. |
 | `CREDIT_WAIT` | Seconds a request may wait for SMB credits (300) before failing. |
 | `_credits` | Credits currently free on a connection. |
+| `_alive` | Is the connection's receiver thread still running? (If not, no credits will ever come — fail at once.) |
+| `READ_RESUME_WAITS` / `SMB_EXPERIMENTAL_TRANSPORT_RECEIVE_TIMEOUT` | Pauses between reconnect tries while reading; 2-minute dead-connection detection (set before any connection is made). |
+| `is_permanent` | Missing file / access denied / changed file — errors that a reconnect can't fix. |
+| `_identity` | Size + last-write time of an open file, to check it didn't change between two opens. |
+| `ResumableReader` | The resumable reader described above (wrapped in a 4 MB `BufferedReader` by `open_read`). |
+| `ResumableReader.__init__` / `ResumableReader.readable` / `ResumableReader.seekable` / `ResumableReader.tell` / `ResumableReader.seek` | Opens the file, remembers its identity; seekable (the zip writer and `check_complete` seek to the end). |
+| `ResumableReader._reopen` / `ResumableReader._drop` | Reopen at the saved byte after checking the file is unchanged / close the broken file and the client's connections. |
+| `ResumableReader.readinto` | Reads; on a connection error waits and continues, on a permanent error or after the last try raises. |
+| `ResumableReader.close` | Closes the file. |
 | `_install_credit_guard` | The `smbprotocol` patch described above (idempotent; checked by `tests/test_smb_guard.py`). |
 | `_ATTR_DIRECTORY`, `_ATTR_REPARSE` | File attribute bits used while listing (skip reparse points when recursing). |
 | `_ts` | Directory-listing time → Unix timestamp. |
@@ -56,7 +73,8 @@ connection *is* shared by several threads:
 | `SMB.list_dirs` | Sub-folder names (archive date folders). |
 | `SMB.is_dir` | Is the path a folder? |
 | `SMB.stat` / `SMB.exists` | File info (opens a handle → current size, even while another program writes) / existence. |
-| `SMB.open_read` / `SMB.opener` | Open for reading, allowing other programs to keep writing / a function that does that later. |
+| `SMB._open_raw` | The plain (unbuffered) file open, allowing other programs to keep writing. |
+| `SMB.open_read` / `SMB.opener` | A resumable, buffered reader for a file / a function that opens one later. |
 | `SMB.upload` | Local file → share via `.uploading` + size check + rename. |
 | `SMB.open_write` | Seekable writer (zips seek back to patch headers). |
 | `SMB.replace` / `SMB.rename` | Rename (replace an existing target / plain rename, also folders). |

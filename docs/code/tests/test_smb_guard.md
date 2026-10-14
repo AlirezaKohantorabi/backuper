@@ -9,3 +9,7 @@ SMB robustness ([transport/smb.py](../backuper/transport/smb.md)) — the 2026-1
 | `test_chunk_size_waits_for_credits_instead_of_returning_zero` | With 0 credits a read waits for credits instead of becoming a 0-byte read (= fake end-of-file). |
 | `test_each_client_has_its_own_connections` | Two `SMB` objects never share a connection cache; `with` closes it. |
 | `test_check_complete` | Short reads raise `IncompleteCopy`; complete ones and size-less streams pass. |
+| `_Flaky` / `_Flaky.__init__` / `_Flaky.readinto` | An in-memory file whose "connection" drops once after N bytes. |
+| `test_reader_resumes_at_the_same_byte_after_a_dropped_connection` | One reconnect, nothing re-read from the start, all bytes arrive. |
+| `test_reader_refuses_to_continue_a_file_that_changed` | A file that changed while the connection was down raises `IncompleteCopy` instead of mixing two versions. |
+| `test_reader_gives_up_on_permanent_errors` | Access denied is raised at once, not retried. |

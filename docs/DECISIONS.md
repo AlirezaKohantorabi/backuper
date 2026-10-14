@@ -127,3 +127,9 @@ recommendation accepted by the owner.
 ### D22 — Folder copies with 4 parallel workers (2026-10-14, E)
 - **Why:** Finance turned out to be 167 GB in 184,495 files; one file at a time ran at ~1,250 files/min
   (≈ 2.5 h). Small-file copying is round-trip bound, so 4 workers (each its own connection) cut it several-fold.
+
+### D23 — Resume reads after a dropped connection (2026-10-14, E)
+- **Alternatives:** copy big source files to local staging first (resumable by offset), then zip; only retry.
+- **Why:** the link to the other site drops for many minutes during working hours; restarting an 11 GB read
+  costs an hour each time. Continuing at the same byte (file unchanged) needs no extra disk and keeps the
+  zip streaming straight into the archive.

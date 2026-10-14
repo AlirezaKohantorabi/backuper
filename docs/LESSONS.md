@@ -65,6 +65,7 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 | 17 | Failures went unnoticed until someone opened the folder | archive-only mode has no Telegram report, and the status file only showed run totals | the owner | The status file lists every failed source with the reason (v1.7). **Lesson:** every mode needs a place where failures are visible without digging. |
 | 18 | The service ran the old version after "restart done" | the restart happened minutes before the update was installed | the version in the startup log line | Restart button / `backuper restart` (v1.7). **Lesson:** after deploying, confirm the running version, not just that it runs. |
 | 19 | `backuper status` → *command not found*; then the CLI looked for `data/` in the current folder | the command lived only in `.venv/bin`; relative `DATA_DIR` resolved against the current folder | the owner | `~/.local/bin` link; paths relative to the `.env` file. **Lesson:** run every documented command the way the user will (from their home folder). |
+| 20 | The re-run of Hamrahan failed after 2 hours although it was 98 % done | the link to the 172.16.3.x site dropped for ~17 min; every retry restarted the 11 GB read from zero, and the library needed 10 min to notice the silence (+5 min of our credit wait on a dead connection) | the verification run's report | Reads resume at the same byte; 2-min dead-link detection; no waiting on dead connections (v1.7.1). **Lesson:** retries must be *resumable* for big transfers over slow/flaky links — design for the outage, not just the error. |
 
 ## 4. What we discovered about the environment (and how it changed the plan)
 
@@ -127,6 +128,8 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 | SMB: 10 threads × 384 MB, one connection each (1.7) | 0 errors, 3.8 GB in 39 s (~100 MB/s) |
 | Listing Finance after the rights fix | 184,495 files, 167.5 GB in 209 s (was 11,759 files / 13.3 GB visible) |
 | Folder copy, one file at a time (same server) | ~1,250 files/min, ~1 GB/min per copy |
+| Link to 172.16.3.x in working hours | outage 12:19–12:36; 1.6–4.6 MB/s while shared; listing iCan's Upload folder took 29 min (7 min at 07:00) |
+| Resume test: connection cut at 300 MB of a 932 MB file | reconnected after 10 s, continued at the same byte, identical SHA-256 |
 | Folder copy, 4 workers (1.7) — Edari | 30,324 files, 21.0 GB in 7 min 49 s (~3,900 files/min, 45.7 MB/s), 0 skipped |
 
 ## 6. What worked well

@@ -9,6 +9,16 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.7.1] — 2026-10-14
+
+### Fixed
+- **A network outage restarted big reads from zero.** The re-run of Hamrahan (11.3 GB) was 98 % read when the
+  link to the 172.16.3.x site dropped for ~17 minutes; each retry started over and the source failed. Reads now
+  **resume at the same byte** after reconnecting (tries for ~22 minutes; only if the file is unchanged).
+  Verified by cutting a real connection in the middle of a 932 MB file: identical result.
+- A dead connection is noticed after 2 minutes of silence instead of 10, and nothing waits 5 more minutes for
+  "SMB credits" on a connection that is already gone.
+
 ## [1.7.0] — 2026-10-14
 
 ### Fixed

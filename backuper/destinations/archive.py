@@ -22,7 +22,7 @@ from backuper import jalali
 from backuper.db import Store
 from backuper.fields import unc_server
 from backuper.models import Artifact
-from backuper.transport.smb import SMB, SMBError
+from backuper.transport.smb import SMB, SMBError, is_permanent
 from backuper.transport.smb import join as unc_join
 from backuper.util import check_complete, human_size
 
@@ -38,13 +38,13 @@ class ArchiveError(RuntimeError):
 
 
 def _is_unreadable(ex: BaseException) -> bool:
-    """A source file we may skip (locked, access denied, vanished) — as opposed to a connection or
-    archive problem, which must fail the copy so it can be retried."""
+    """A source file we may skip (locked, access denied, vanished, changed while read) — as opposed to a
+    connection or archive problem, which must fail the copy so it can be retried."""
     text = str(ex)
-    return any(k in text for k in ("STATUS_ACCESS_DENIED", "STATUS_SHARING_VIOLATION", "STATUS_OBJECT_NAME_NOT_FOUND",
-                                   "STATUS_OBJECT_PATH_NOT_FOUND", "STATUS_DELETE_PENDING", "STATUS_FILE_IS_A_DIRECTORY",
-                                   "STATUS_LOCK_NOT_GRANTED", "STATUS_FILE_LOCK_CONFLICT", "IncompleteCopy",
-                                   "incomplete copy")) or isinstance(ex, PermissionError | FileNotFoundError)
+    return is_permanent(ex) or any(k in text for k in (
+        "STATUS_ACCESS_DENIED", "STATUS_SHARING_VIOLATION", "STATUS_OBJECT_NAME_NOT_FOUND",
+        "STATUS_OBJECT_PATH_NOT_FOUND", "STATUS_DELETE_PENDING", "STATUS_FILE_IS_A_DIRECTORY",
+        "STATUS_LOCK_NOT_GRANTED", "STATUS_FILE_LOCK_CONFLICT", "incomplete copy"))
 
 
 class Archive:

@@ -13,8 +13,11 @@ credits, and makes sure a read is never sent with zero length (that looks like e
 
 from __future__ import annotations
 
+import errno
+import io
 import logging
 import ntpath
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -37,11 +40,31 @@ log = logging.getLogger(__name__)
 COPY_CHUNK = 4 * 1024 * 1024
 SMBError = (OSError, SMBException)
 CREDIT_WAIT = 300  # seconds a request may wait for SMB credits before failing
+# A connection that receives nothing for this long is declared dead (smbprotocol's default: 600 s). Data
+# flows continuously during a transfer, so 2 minutes of silence means the link is down. Read by every new
+# smbprotocol Connection, so it must be set before the first one is made.
+os.environ.setdefault("SMB_EXPERIMENTAL_TRANSPORT_RECEIVE_TIMEOUT", "120")
+# Reading a file: if the connection drops, reconnect and continue at the same byte after these pauses
+# (~22 minutes in all) — an outage of the link to another site becomes a pause, not a restart.
+READ_RESUME_WAITS = (10, 30, 60, 120, 180, 300, 300, 300)
+_GONE_ERRNOS = {errno.ENOENT, errno.EACCES, errno.EPERM}
 
 
 def _credits(conn: Connection) -> int:
     with conn.sequence_lock:
         return conn.sequence_window["high"] - conn.sequence_window["low"]
+
+
+def _alive(conn: Connection) -> bool:
+    """False once the connection's receiver thread has stopped (connection lost) — no credits will come."""
+    worker = getattr(conn, "_t_worker", None)
+    return worker is None or (worker.is_alive() and getattr(conn, "_t_exc", None) is None)
+
+
+def is_permanent(e: BaseException) -> bool:
+    """The file is missing or we may not read it — retrying won't help (unlike a dropped connection)."""
+    return (isinstance(e, PermissionError | FileNotFoundError | IncompleteCopy)
+            or getattr(e, "errno", None) in _GONE_ERRNOS)
 
 
 def _install_credit_guard() -> None:
@@ -75,8 +98,8 @@ def _install_credit_guard() -> None:
         deadline = time.monotonic() + CREDIT_WAIT
         while True:
             with gate(self):  # check + send atomically w.r.t. other senders on this connection
-                if _credits(self) >= need:
-                    return orig_send(self, messages, *args, **kwargs)
+                if _credits(self) >= need or not _alive(self):
+                    return orig_send(self, messages, *args, **kwargs)  # a dead connection raises its own error
             if time.monotonic() > deadline:
                 raise SMBException(f"no SMB credits for {CREDIT_WAIT}s (need {need}, have {_credits(self)})")
             time.sleep(0.005)
@@ -87,6 +110,8 @@ def _install_credit_guard() -> None:
             size, request = orig_chunk(connection, length, operation)
             if size > 0 or length <= 0:
                 return size, request
+            if not _alive(connection):
+                raise SMBException(f"connection lost — can't {operation} data")
             if time.monotonic() > deadline:
                 raise SMBException(f"no SMB credits for {CREDIT_WAIT}s to {operation} data")
             time.sleep(0.005)
@@ -123,6 +148,89 @@ class RemoteFile:
 
 def join(*parts: str) -> str:
     return ntpath.join(*parts)
+
+
+def _identity(raw) -> tuple:
+    """Size and last-write time of an open SMB file (to see whether it changed between two opens)."""
+    fd = getattr(raw, "fd", None)
+    return (getattr(fd, "end_of_file", None), getattr(fd, "last_write_time", None))
+
+
+class ResumableReader(io.RawIOBase):
+    """Reads one file; if the connection drops, drops the client's connections, waits, reopens the file and
+    continues at the same byte — provided the file's size and date are unchanged (otherwise IncompleteCopy).
+    `open_raw` opens the file, `reset` closes the connections, `waits` are the pauses between tries."""
+
+    def __init__(self, open_raw: Callable[[], BinaryIO], reset: Callable[[], None], what: str,
+                 waits: tuple[float, ...] = READ_RESUME_WAITS, identity: Callable[[BinaryIO], tuple] = _identity):
+        super().__init__()
+        self._open_raw, self._reset, self._what, self._waits, self._identity = open_raw, reset, what, waits, identity
+        self._raw: BinaryIO | None = open_raw()
+        self._id = identity(self._raw)
+        self._pos = 0
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._pos
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        raw = self._reopen() if self._raw is None else self._raw
+        self._pos = raw.seek(offset, whence)
+        return self._pos
+
+    def _reopen(self) -> BinaryIO:
+        raw = self._open_raw()
+        if self._identity(raw) != self._id:
+            raw.close()
+            raise IncompleteCopy(f"{self._what} changed while the connection was down — can't continue reading it")
+        raw.seek(self._pos)
+        self._raw = raw
+        log.info("reconnected — continuing %s at byte %d", self._what, self._pos)
+        return raw
+
+    def _drop(self) -> None:
+        raw, self._raw = self._raw, None
+        if raw is not None:
+            try:
+                raw.close()
+            except Exception:  # noqa: BLE001 - the connection is already broken
+                pass
+        try:
+            self._reset()
+        except Exception:  # noqa: BLE001
+            log.debug("closing the broken connection failed", exc_info=True)
+
+    def readinto(self, b) -> int:
+        tries = 0
+        while True:
+            try:
+                raw = self._reopen() if self._raw is None else self._raw
+                n = raw.readinto(b) or 0
+                self._pos += n
+                return n
+            except Exception as e:
+                if is_permanent(e) or tries >= len(self._waits):
+                    raise
+                wait = self._waits[tries]
+                tries += 1
+                log.warning("reading %s stopped at byte %d (%s: %s) — reconnecting in %ds (try %d of %d)",
+                            self._what, self._pos, e.__class__.__name__, e, wait, tries, len(self._waits))
+                self._drop()
+                time.sleep(wait)
+
+    def close(self) -> None:
+        if self._raw is not None:
+            try:
+                self._raw.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._raw = None
+        super().close()
 
 
 class SMB:
@@ -216,9 +324,14 @@ class SMB:
             return False
 
     # -- read / write -------------------------------------------------------------
-    def open_read(self, path: str) -> BinaryIO:
+    def _open_raw(self, path: str):
         # share_access 'rw' lets us read files other programs have open for writing (if they allow it).
-        return smbclient.open_file(path, mode="rb", share_access="rw", buffering=COPY_CHUNK, **self._kw(path))
+        return smbclient.open_file(path, mode="rb", share_access="rw", buffering=0, **self._kw(path))
+
+    def open_read(self, path: str) -> BinaryIO:
+        """Buffered reader that survives a dropped connection (see ResumableReader)."""
+        reader = ResumableReader(lambda: self._open_raw(path), self.close, path)
+        return io.BufferedReader(reader, buffer_size=COPY_CHUNK)
 
     def opener(self, path: str) -> Callable[[], BinaryIO]:
         return lambda: self.open_read(path)

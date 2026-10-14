@@ -9,8 +9,9 @@ import time
 import pytest
 import smbclient._io as smb_io
 from smbprotocol.connection import Connection
+from smbprotocol.exceptions import SMBException
 
-from backuper.transport.smb import SMB
+from backuper.transport.smb import SMB, ResumableReader
 from backuper.util import IncompleteCopy, check_complete
 
 
@@ -57,3 +58,56 @@ def test_check_complete():
         def seekable(self):
             return False
     check_complete(Pipe(), 0, "pipe")
+
+
+class _Flaky(io.BytesIO):
+    """A file whose connection 'drops' once after `fail_at` bytes."""
+
+    def __init__(self, data: bytes, fail_at: int | None):
+        super().__init__(data)
+        self.fail_at = fail_at
+
+    def readinto(self, b):
+        if self.fail_at is not None and self.tell() >= self.fail_at:
+            raise SMBException("Connection timed out. Server did not respond within timeout.")
+        n = min(len(b), 1000)
+        return super().readinto(memoryview(b)[:n])
+
+
+def test_reader_resumes_at_the_same_byte_after_a_dropped_connection():
+    data = bytes(range(256)) * 40  # 10 KB
+    opens, resets = [], []
+
+    def open_raw():
+        opens.append(1)
+        return _Flaky(data, 3000 if len(opens) == 1 else None)
+
+    reader = io.BufferedReader(ResumableReader(open_raw, lambda: resets.append(1), "f", waits=(0, 0),
+                                               identity=lambda raw: (len(raw.getvalue()),)), buffer_size=4096)
+    got = reader.read()
+    assert got == data and len(opens) == 2 and len(resets) == 1   # reconnected once, nothing re-read from 0
+    check_complete(reader, len(got), "f")
+
+
+def test_reader_refuses_to_continue_a_file_that_changed():
+    opens = []
+
+    def open_raw():
+        opens.append(1)
+        return _Flaky(b"x" * 5000 if len(opens) == 1 else b"y" * 6000, 2000 if len(opens) == 1 else None)
+
+    reader = ResumableReader(open_raw, lambda: None, "f", waits=(0,), identity=lambda raw: (len(raw.getvalue()),))
+    with pytest.raises(IncompleteCopy, match="changed"):
+        while reader.read(1000):
+            pass
+
+
+def test_reader_gives_up_on_permanent_errors():
+    def open_raw():
+        raw = _Flaky(b"x" * 100, 0)
+        raw.readinto = lambda b: (_ for _ in ()).throw(PermissionError("STATUS_ACCESS_DENIED"))
+        return raw
+
+    reader = ResumableReader(open_raw, lambda: None, "f", waits=(0, 0, 0), identity=lambda raw: ())
+    with pytest.raises(PermissionError):
+        reader.read(10)
