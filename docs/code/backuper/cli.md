@@ -22,6 +22,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `backuper export [FILE]` | Current configuration as YAML, **without** passwords. |
 | `backuper credential NAME [-u USER]` | Create/update a credential; the password is typed hidden. |
 | `backuper set KEY [VALUE]` | Change a setting; secrets are typed hidden. |
+| `backuper restart [--now]` | Restart the service — once no backup is running, or `--now`. No sudo (see [control](control.md)). |
 | `backuper gen-key` | Print a new `SECRET_KEY`. |
 
 ## Functions
@@ -33,7 +34,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `open_store` | Opens the database with the `SECRET_KEY` box. |
 | `cmd_gen_key` | `gen-key`. |
 | `cmd_serve` | `serve` — chooses bot mode or archive-only mode. |
-| `_serve_archive_only` | Archive-only mode: engine without a sender + scheduler + the [status file](status.md) writer, forever. |
+| `_serve_archive_only` | Archive-only mode: engine without a sender + scheduler + the [status file](status.md) writer + leftover clean-up, until a restart is requested. |
 | `cmd_run` | `run` — connects Telegram only if configured. |
 | `cmd_test` | `test` — calls each plugin's `test()` with a 3-minute limit. |
 | `cmd_check` | `check`. |
@@ -44,4 +45,6 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `cmd_list` | `list`. |
 | `cmd_log` | `log` — prints `data/logs/runs/run-<id>.log`. |
 | `cmd_status` | `status` — prints `data/status.txt` and warns if it's old (service not running). |
+| `cmd_restart` | `restart` — writes the request, then reports "restarting", "waiting for backups" or "service not running". |
+| `default_env` | Which `.env` to use: `--env`, `$BACKUPER_ENV`, `./.env`, else the installation's own — so `backuper status` works from any folder. |
 | `main` | Argument parsing; prints `ConfigError` nicely and exits 2. |

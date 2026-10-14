@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from telethon import Button, errors, events
 
-from backuper import jalali, logctx
+from backuper import control, jalali, logctx
 from backuper.bot.forms import FormState, prompt, summary
 from backuper.destinations.telegram import TOPICS_KEY, esc
 from backuper.fields import CREDENTIAL, GROUP, INT, SCHEDULE, SECRET, TEXT, TIME, Field, FieldError, describe_schedule
@@ -87,7 +87,7 @@ class Panel:
     # ======================================================================
     # plumbing
     # ======================================================================
-    COMMANDS = frozenset({"/start", "/menu", "/cancel", "/help", "/status", "/run", "/id", "/bind"})
+    COMMANDS = frozenset({"/start", "/menu", "/cancel", "/help", "/status", "/run", "/id", "/bind", "/restart"})
 
     @classmethod
     def _cmd(cls, text: str) -> tuple[str | None, str]:
@@ -140,6 +140,8 @@ class Panel:
             await event.respond(HELP, parse_mode="html", buttons=[BACK_MAIN])
         elif cmd == "/status":
             await self.show_status(event)
+        elif cmd == "/restart":
+            await self.confirm_restart(event)
         elif cmd == "/run":
             if arg:
                 src = self.store.get_source_by_name(arg)
@@ -229,6 +231,9 @@ class Panel:
             "aa": lambda e, _: self.add_admin(e),
             "ad": lambda e, a: self.remove_admin(e, int(a)),
             "stat": lambda e, _: self.show_status(e),
+            "rs": lambda e, _: self.confirm_restart(e),
+            "rsi": lambda e, _: self.restart(e, now=False),
+            "rsn": lambda e, _: self.restart(e, now=True),
             "f": self.form_button,
             "noop": lambda e, _: asyncio.sleep(0),
         }
@@ -267,10 +272,39 @@ class Panel:
             [Button.inline("📦 Sources", b"sl:0"), Button.inline("🔑 Credentials", b"cl")],
             [Button.inline("▶️ Run all now", b"ra"), Button.inline("📊 History", b"hl")],
             [Button.inline("🗂 Groups", b"gl"), Button.inline("⏰ Schedule", b"sch")],
-            [Button.inline("⚙️ Settings", b"set")],
+            [Button.inline("⚙️ Settings", b"set"), Button.inline("🔄 Restart", b"rs")],
             [Button.inline("👥 Admins", b"al"), Button.inline("❓ Help", b"help")],
         ]
         await self._respond(event, "\n".join(lines), buttons)
+
+    async def confirm_restart(self, event) -> None:
+        runs = list(self.app.engine.runs.values())
+        lines = ["🔄 <b>Restart the Backuper service?</b>", "",
+                 "It stops and starts again in about 20 seconds and loads updated code. "
+                 "I'll message you when I'm back."]
+        if runs:
+            lines += ["", f"⏳ <b>{len(runs)} backup run(s) in progress:</b>"]
+            lines += [f"• run #{r.run_id} ({esc(r.trigger)}) — {esc(r.phase)}" for r in runs]
+            lines += ["", "<b>When backups finish</b> waits for them. <b>Now</b> stops them — their unfinished files "
+                          "are cleaned up and they run again at their next scheduled time."]
+            rows = [[Button.inline("⏳ When backups finish", b"rsi")],
+                    [Button.inline("⚠️ Now — stop the backups", b"rsn")]]
+        else:
+            rows = [[Button.inline("🔄 Restart now", b"rsn")]]
+        rows.append([Button.inline("✖️ Cancel", b"m")])
+        await self._respond(event, "\n".join(lines), rows)
+
+    async def restart(self, event, now: bool) -> None:
+        sender = await event.get_sender()
+        who = " ".join(filter(None, [getattr(sender, "first_name", ""), getattr(sender, "last_name", "")])) or "?"
+        control.request_restart(self.app.cfg.data_dir, now=now or not self.app.engine.runs,
+                                by=f"{who} ({event.sender_id}) in Telegram", chat_id=event.chat_id)
+        log.info("restart requested by %s (%s), %s", who, event.sender_id, "now" if now else "when idle")
+        if now or not self.app.engine.runs:
+            text = "🔄 Restarting… I'll send a message when I'm back (about 20 seconds)."
+        else:
+            text = "⏳ Restart scheduled — right after the running backups finish. I'll message you when I'm back."
+        await self._respond(event, text, None)
 
     async def show_status(self, event) -> None:
         if self.app.engine.busy:
@@ -516,9 +550,9 @@ class Panel:
         msg = await self.app.client.send_message(event.chat_id, f"🧪 Testing <b>{esc(src.name)}</b>…",
                                                  parse_mode="html")
         workdir = self.app.cfg.staging_dir / f"test-{sid}"
+        ctx = RunContext(self.store, src, workdir, jalali.now_jalali(self.app.cfg.timezone))
         try:
             cls = get_type(src.type)
-            ctx = RunContext(self.store, src, workdir, jalali.now_jalali(self.app.cfg.timezone))
             result = await asyncio.wait_for(cls(src, ctx).test(), timeout=180)
             text = f"✅ <b>{esc(src.name)}</b>\n{esc(result)}"
             if ctx.warnings:
@@ -531,6 +565,7 @@ class Panel:
             log.info("test of %s failed", src.name, exc_info=True)
             text = f"❌ <b>{esc(src.name)}</b>: {esc(short_error(e))}"
         finally:
+            await asyncio.to_thread(ctx.close)
             shutil.rmtree(workdir, ignore_errors=True)
         await msg.edit(text[:4000], parse_mode="html",
                        buttons=[[Button.inline("⬅️ Back to source", f"sv:{sid}".encode())]])

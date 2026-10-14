@@ -44,6 +44,10 @@ else
 fi
 mkdir -p data && chmod 700 data
 
+# 3b. `backuper` on the PATH for this user (~/.local/bin is on Ubuntu's default PATH), works from any folder
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$APP_DIR/.venv/bin/backuper" "$HOME/.local/bin/backuper"
+
 # 4. systemd service
 if [[ $WITH_SERVICE -eq 1 ]]; then
   say "Installing systemd service '${SERVICE_NAME}' (runs as ${RUN_USER}) — sudo needed"
@@ -61,8 +65,9 @@ fi
 
 say "Done. Useful commands:"
 cat <<EOF
-  .venv/bin/backuper check                 # config + archive access
-  .venv/bin/backuper import my-company.yaml # bulk-load sources/credentials
-  .venv/bin/backuper test                  # test every source
-  sudo systemctl restart ${SERVICE_NAME}   # after editing .env
+  backuper check                 # config + archive access
+  backuper import my-company.yaml # bulk-load sources/credentials
+  backuper test                  # test every source
+  backuper status                # what's running now, last and next runs
+  backuper restart               # restart the service (after editing .env or updating) — no sudo
 EOF

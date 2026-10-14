@@ -43,6 +43,7 @@ mode; reads [engine.py](engine.md) (`runs`, `RunProgress.render(html=False)`), [
 | `StatusWriter` | Composes and writes the status. |
 | `StatusWriter.__init__` | Config, store, engine, scheduler (optional). |
 | `StatusWriter.compose` | (header with the time, body): running runs with per-source progress, or "Idle"; last 5 runs; next 5 scheduled runs; mode. |
+| `StatusWriter._problems` | "Problems in those runs": every failed / partial / warning source of the last 3 finished runs with its reason. |
 | `StatusWriter._run_line` | One line per past run: icon, id, status, Jalali start time, trigger, duration, size. |
 | `StatusWriter.write_once` | Writes `data/status.txt` (atomic rename) and the archive copy when the body changed or the refresh/heartbeat is due. |
 | `StatusWriter.run` | The background loop. |

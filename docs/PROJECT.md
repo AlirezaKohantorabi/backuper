@@ -142,8 +142,9 @@ database's secrets can only be decrypted with `SECRET_KEY`).
 
 | Task | How |
 |---|---|
-| Install / upgrade | `git pull && ./install.sh` (keeps `.env` and `data/`), then `sudo systemctl restart backuper`. See [SETUP.md](SETUP.md). |
-| Start / stop / status | `sudo systemctl restart|stop|status backuper` |
+| Install / upgrade | `git pull && ./install.sh` (keeps `.env` and `data/`), then `backuper restart`. See [SETUP.md](SETUP.md). |
+| Restart | bot 🔄 Restart / `/restart`, or `backuper restart [--now]` — waits for running backups unless "now"; no sudo ([control](code/backuper/control.md)). |
+| Start / stop / status | `sudo systemctl start|stop|status backuper` |
 | Logs | per run: bot 📄 Log / `backuper log [id]`; service: `journalctl -u backuper -f`, `data/logs/backuper.log` |
 | What's running now? | `E:\Backuper\_backuper-status.txt` (open in Explorer), `backuper status`, the bot's `/status`, the live message in 📊 Reports |
 | Run now | bot ▶️ (all / a group / a source) or `backuper run [Name…]` |
@@ -161,6 +162,8 @@ covers everything outside runs (startup, schedule, bot). See [code/backuper/logc
 | Symptom | Likely cause / fix |
 |---|---|
 | Bot doesn't answer | not an owner/admin (`/id`), service down (`systemctl status`), or archive-only mode (no API id). |
+| `Request requires 1 credits but only 0 credits are available` | SMB flow control on a shared connection — fixed in 1.7.0 (one connection per transfer, waiting for credits). If it ever shows again, it's a library change: see [transport/smb](code/backuper/transport/smb.md). |
+| `*.uploading` / `*.partial` in a date folder | an unfinished zip/copy: being written right now (see the status file), or left by an interrupted run — removed at the next service start. |
 | `STATUS_ACCESS_DENIED` | share or NTFS rights missing for the bot account ([script](../docs/windows/setup-backuper-access.ps1)). |
 | SQL "Login failed … disabled" | vendor-locked server → [mssql/03](mssql/03-locked-out-of-sql.md). |
 | SQL "TDS server connection failed" | old SQL Server without TLS 1.2 → *Connection encryption* = off. |

@@ -14,3 +14,4 @@ real bugs (a `//server/share` answer treated as a command; the add wizard not as
 | `_data` / `all_buttons` | Read callback data from buttons (Telethon ≥ 1.45 keeps it in `button.type.data`). |
 | `press` / `say` | Press a button / send text; `press` fails the test on unexpected errors. |
 | `test_full_admin_flow` | Non-admin refused; credential form (password message deleted); add a SQL source with validation errors; edit, toggle, duplicate, rename; nested "new credential"; groups (create, upload-from, members, rename follows, schedule page); moving a source between groups from its page; one-time run (bad input refused, created, listed, cancelled); 📄 Log (clear message when missing, file sent when present); settings; admins (owner only); deleting a used credential refused; history; delete source. |
+| `test_restart_button` | 🔄 Restart in the main menu and `/restart`: confirmation, request written with who asked and the chat to notify. |

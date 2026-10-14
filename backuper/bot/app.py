@@ -7,6 +7,7 @@ from urllib.parse import unquote, urlparse
 from telethon import TelegramClient, functions, types
 from telethon.network import connection
 
+from backuper import __version__, control
 from backuper.config import AppConfig, ConfigError
 from backuper.db import Store
 from backuper.destinations.telegram import TelegramSender
@@ -21,6 +22,7 @@ COMMANDS = [
     ("status", "Progress of the current run"),
     ("cancel", "Cancel the current form"),
     ("id", "Show your Telegram ID / chat ID"),
+    ("restart", "Restart the service"),
     ("help", "How it works"),
 ]
 
@@ -83,13 +85,31 @@ class BotApp:
         except Exception:  # noqa: BLE001
             log.debug("couldn't set bot commands", exc_info=True)
         self.engine.startup_cleanup()
+        control.clear_request(self.cfg.data_dir)
         self.panel.register()
         self.scheduler.start()
         from backuper.status import StatusWriter
 
         status = asyncio.create_task(StatusWriter(self.cfg, self.store, self.engine, self.scheduler).run())
+        leftovers = asyncio.create_task(self.engine.clean_archive_leftovers())
+        restart = asyncio.create_task(self._restart_when_requested())
+        await self._say_back_online()
         try:
             await self.client.run_until_disconnected()
         finally:
-            status.cancel()
+            for task in (status, leftovers, restart):
+                task.cancel()
             self.scheduler.shutdown()
+
+    async def _restart_when_requested(self) -> None:
+        """🔄 Restart / `backuper restart`: disconnect, so the process ends and systemd starts it again."""
+        await control.wait_for_restart(self.cfg.data_dir, self.engine)
+        await self.client.disconnect()
+
+    async def _say_back_online(self) -> None:
+        notice = control.take_notice(self.cfg.data_dir)
+        if notice and notice.get("chat_id"):
+            try:
+                await self.client.send_message(int(notice["chat_id"]), f"✅ Back online — Backuper {__version__}.")
+            except Exception:  # noqa: BLE001
+                log.debug("couldn't send the back-online message", exc_info=True)

@@ -276,3 +276,17 @@ async def test_full_admin_flow(panel, store):
     await press(panel, f"sdy:{src.id}")
     assert store.get_source(src.id) is None
     await press(panel, "m")
+
+
+async def test_restart_button(panel, cfg):
+    from backuper import control
+
+    ev = await press(panel, "m")
+    assert "rs" in all_buttons(ev.buttons)
+    ev = await press(panel, "rs")
+    assert "Restart" in ev.text and "rsn" in all_buttons(ev.buttons)  # idle: just "Restart now"
+    await press(panel, "rsn")
+    req = control.pending_request(cfg.data_dir)
+    assert req["now"] and req["chat_id"] == OWNER and "Tester" in req["by"]
+    ev = await say(panel, "/restart")
+    assert any("Restart" in r for r in ev.responses)

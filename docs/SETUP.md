@@ -112,9 +112,14 @@ First full run: bot → ▶️ Run all now (or `backuper run`). Check 📊 Histo
 ## 5. Upgrading
 
 ```bash
-cd ~/backuper-app && git pull && ./install.sh && sudo systemctl restart backuper
+cd ~/backuper-app && git pull && ./install.sh && backuper restart
 ```
-Database changes are applied automatically at startup. Read [CHANGELOG.md](../CHANGELOG.md) first.
+`backuper restart` (or 🔄 Restart in the bot) waits until no backup is running, then the service restarts
+itself — no sudo needed (`backuper restart --now` doesn't wait). Database changes are applied automatically at
+startup. Read [CHANGELOG.md](../CHANGELOG.md) first.
+
+`install.sh` links `backuper` into `~/.local/bin`, so the command works from any folder (log in again once
+if your shell says *command not found*).
 
 ## 6. Moving to another company
 

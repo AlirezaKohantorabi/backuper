@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import fnmatch
+import io
 import re
+from typing import BinaryIO
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 
@@ -48,3 +50,18 @@ def short_error(e: BaseException, limit: int = 300) -> str:
     if e.__class__.__name__ not in text:
         text = f"{e.__class__.__name__}: {text}"
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+class IncompleteCopy(OSError):
+    """Fewer bytes arrived than the source file has — never accept such a copy."""
+
+
+def check_complete(stream: BinaryIO, done: int, what: str) -> None:
+    """Raise IncompleteCopy if fewer bytes were read than the stream's file holds.
+    Streams that can't tell their size (FTP, pipes) are trusted."""
+    try:
+        end = stream.seek(0, io.SEEK_END)
+    except (OSError, ValueError, AttributeError):
+        return
+    if isinstance(end, int) and done < end:
+        raise IncompleteCopy(f"incomplete copy of {what}: read {done} of {end} bytes")

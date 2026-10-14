@@ -19,6 +19,7 @@ import logging
 import shutil
 import time
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -46,6 +47,9 @@ ProgressCallback = Callable[[str], Awaitable[None]]
 def _speed(nbytes: int, seconds: float) -> str:
     return f"{nbytes / 2**20 / seconds:.1f} MB/s" if seconds > 0.05 else "instant"
 MIN_FREE_BYTES = 1024 * 1024 * 1024
+ARCHIVE_TRIES = 3            # attempts to write one zip/copy into the archive
+RETRY_WAITS = (30, 120)      # seconds before the 2nd and 3rd attempt
+T = TypeVar("T")
 
 
 @dataclass
@@ -142,6 +146,16 @@ class Engine:
         for d in self.cfg.staging_dir.glob("run-*"):
             shutil.rmtree(d, ignore_errors=True)
         shutil.rmtree(self.cfg.staging_dir / "resend", ignore_errors=True)
+
+    async def clean_archive_leftovers(self) -> None:
+        """At startup: remove unfinished .uploading/.partial items that an interrupted run left in the archive."""
+        try:
+            removed = await self.archive.clean_leftovers()
+        except Exception:  # noqa: BLE001 - the archive may be unreachable right now; try again next start
+            log.warning("couldn't check the archive for unfinished files", exc_info=True)
+            return
+        for rel in removed:
+            log.info("removed unfinished %s left by an interrupted run", rel)
 
     def _prune_unsent(self) -> None:
         keep_days = int(self.store.get_setting("archive_keep_days") or 14)
@@ -361,9 +375,37 @@ class Engine:
                 log.exception("FAILED with an unexpected error")
                 res.status, res.message = FAILED, short_error(e)
                 sp.begin("failed")
+            finally:
+                await asyncio.to_thread(ctx.close)
             res.warnings.extend(ctx.warnings)
             res.finished = time.time()
         return res
+
+    async def _with_retries(self, what: str, ctx: RunContext, attempt: Callable[[], Awaitable[T]],
+                            on_give_up: Callable[[], Awaitable[None]] | None = None) -> T:
+        """Writing into the archive can fail now and then (network hiccup, file server busy): try up to
+        ARCHIVE_TRIES times. Source connections are reset between attempts; folder copies resume."""
+        for n in range(1, ARCHIVE_TRIES + 1):
+            try:
+                result = await attempt()
+                if n > 1:
+                    ctx.note(f"{what}: succeeded on attempt {n}")
+                return result
+            except SourceError:
+                raise
+            except Exception as e:
+                if n == ARCHIVE_TRIES:
+                    log.error("%s failed %d times, giving up: %s", what, n, short_error(e))
+                    if on_give_up is not None:
+                        await on_give_up()
+                    raise
+                wait = RETRY_WAITS[n - 1]
+                log.warning("%s failed (attempt %d of %d): %s — retrying in %ds", what, n, ARCHIVE_TRIES,
+                            short_error(e), wait)
+                log.debug("details", exc_info=True)
+                await asyncio.to_thread(ctx.reset_connections)
+                await asyncio.sleep(wait)
+        raise AssertionError("unreachable")
 
     async def _package(self, src: SourceRecord, cls: type[SourceType], art: Artifact, ctx: RunContext,
                        folder: str, sp: SourceProgress) -> PackagedFile:
@@ -400,8 +442,12 @@ class Engine:
             t0 = time.monotonic()
             log.info("copying %d file(s), %s, to archive %s/%s", len(art.entries), human_size(art.total_size),
                      folder, dirname)
-            pf.archive_rel, pf.size, warnings = await self.archive.copy_tree(
-                art, folder, dirname, skip_unreadable=bool(art.meta.get("skip_unreadable")), progress=progress)
+            pf.archive_rel, pf.size, warnings = await self._with_retries(
+                f"copy {dirname}", ctx,
+                lambda: self.archive.copy_tree(art, folder, dirname,
+                                               skip_unreadable=bool(art.meta.get("skip_unreadable")),
+                                               progress=progress),
+                on_give_up=lambda: self.archive.discard_copy(folder, dirname))
             art.warnings.extend(warnings)
             log.info("copied %s in %s (%s); %d file(s) skipped", human_size(pf.size),
                      human_duration(time.monotonic() - t0), _speed(pf.size, time.monotonic() - t0), len(warnings))
@@ -417,8 +463,10 @@ class Engine:
             sp.begin("zipping → archive", art.total_size)
             t0 = time.monotonic()
             log.info("zipping %s (%s) straight into archive %s", file_name, human_size(art.total_size), folder)
-            pf.archive_rel, pf.size, warnings = await self.archive.write_direct(
-                folder, file_name, lambda f: write_zip(art, f, progress=progress, **zip_opts))
+            pf.archive_rel, pf.size, warnings = await self._with_retries(
+                f"zip {file_name}", ctx,
+                lambda: self.archive.write_direct(folder, file_name,
+                                                  lambda f: write_zip(art, f, progress=progress, **zip_opts)))
             art.warnings.extend(warnings)
             log.info("zipped %s: %s → %s in %s (%s)", file_name, human_size(art.total_size), human_size(pf.size),
                      human_duration(time.monotonic() - t0), _speed(art.total_size, time.monotonic() - t0))
@@ -446,7 +494,8 @@ class Engine:
             sp.begin("archiving", pf.size)
             t0 = time.monotonic()
             try:
-                pf.archive_rel = await self.archive.store_file(out, folder, file_name, progress)
+                pf.archive_rel = await self._with_retries(
+                    f"archive {file_name}", ctx, lambda: self.archive.store_file(out, folder, file_name, progress))
                 log.info("archived %s in %s (%s)", pf.archive_rel, human_duration(time.monotonic() - t0),
                          _speed(pf.size, time.monotonic() - t0))
             except Exception as e:  # noqa: BLE001
@@ -541,6 +590,8 @@ class Engine:
                 except Exception as e:  # noqa: BLE001
                     log.exception("retention for %s failed", res.source_name)
                     res.warnings.append(f"retention failed: {short_error(e)}")
+                finally:
+                    await asyncio.to_thread(pend.plugin.ctx.close)
         if res.status == OK and any(not w.startswith(("retention:", "deleted ", "note:")) for w in res.warnings):
             res.status = WARNING
 

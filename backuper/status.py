@@ -17,7 +17,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from backuper import jalali
+from backuper import control, jalali
 from backuper.config import AppConfig
 from backuper.db import Store
 from backuper.engine import Engine
@@ -53,9 +53,17 @@ class StatusWriter:
                 lines += ["", prog.render(html=False)]
         else:
             lines.append("Idle — no backup running.")
+        req = control.pending_request(self.cfg.data_dir)
+        if req is not None:
+            lines += ["", f"🔄 Restart requested by {req.get('by') or '?'} — "
+                          + ("now." if req.get("now") else "waiting for the running backups to finish.")]
         lines += ["", "Last runs:"]
-        for r in self.store.list_runs(5):
+        recent = self.store.list_runs(5)
+        for r in recent:
             lines.append("  " + self._run_line(r))
+        problems = self._problems([r for r in recent if r["status"] != "running"][:3])
+        if problems:
+            lines += ["", "Problems in those runs (details: backuper log <run>):"] + problems
         if self.scheduler is not None:
             nxt = self.scheduler.next_runs()[:5]
             if nxt:
@@ -65,6 +73,19 @@ class StatusWriter:
         mode = "Telegram uploads on" if self.engine.sender is not None else "ARCHIVE-ONLY (no Telegram uploads)"
         lines += ["", f"Mode: {mode}. Details per run: `backuper log <run>` or 📊 History → 📄 Log."]
         return header, "\n".join(lines)
+
+    def _problems(self, runs) -> list[str]:
+        """Failed / partial / warning sources of the given finished runs, one line each with the reason."""
+        out = []
+        for r in runs:
+            for it in self.store.run_items(r["id"]):
+                if it["status"] in ("ok", "skipped"):
+                    continue
+                icon = STATUS_ICON.get(it["status"], "•")
+                msg = (it["message"] or "").replace("\n", " ")
+                out.append(f"  {icon} #{r['id']} {it['source_name']}: {it['status']}"
+                           + (f" — {msg[:200]}" if msg else ""))
+        return out
 
     def _run_line(self, r) -> str:
         icon = STATUS_ICON.get(r["status"], "⏳" if r["status"] == "running" else "•")

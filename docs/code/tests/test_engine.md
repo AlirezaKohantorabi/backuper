@@ -24,3 +24,8 @@ End-to-end runs with a fake source type and a fake Telegram sender, against a re
 | `test_upload_waits_for_upload_from_time` | Without a time no waiting; with one, uploads wait until then. |
 | `test_archive_only_mode_without_telegram` | No Telegram configured → zips go straight to the archive and count as ✅. |
 | `test_copy_format_makes_a_plain_dated_folder` | "Store as: copy" → plain files (not encrypted), original dates kept, not uploaded, no `.partial` left. |
+| `test_archive_write_is_retried` | A failed write into the archive (like the 2026-10-14 SMB credit errors) is retried; the run ends ✅ with a note. |
+| `test_folder_copy_resumes_after_a_failure` | A folder copy that breaks half-way is retried and only copies the missing files. |
+| `test_folder_copy_that_keeps_failing_leaves_nothing_behind` | After the last attempt fails, no `.partial` folder is left. |
+| `test_unreadable_file_is_skipped_not_retried` | A locked / access-denied file is skipped with a warning; the rest is copied. |
+| `test_startup_removes_leftovers_of_interrupted_runs` | Old `.uploading`/`.partial` items are removed at start; finished zips and very recent leftovers are kept. |

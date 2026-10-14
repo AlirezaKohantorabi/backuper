@@ -60,6 +60,7 @@ class RunContext:
         self.log = log or logging.getLogger(f"backuper.source.{source.name}")
         self.warnings: list[str] = []
         self.notes: list[str] = []  # informational, e.g. "no new backup since …" (not a warning)
+        self._smbs: list[SMB] = []
         workdir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -75,8 +76,21 @@ class RunContext:
         return cred
 
     def smb(self, cred_name: str) -> SMB:
+        """An SMB client with its own connection; closed by `close()` when the source is done."""
         c = self.credential(cred_name, what="SMB credential")
-        return SMB(c.username, c.password)
+        client = SMB(c.username, c.password)
+        self._smbs.append(client)
+        return client
+
+    def reset_connections(self) -> None:
+        """Drop this source's SMB connections (they reconnect on next use) — before a retry."""
+        for client in self._smbs:
+            client.close()
+
+    def close(self) -> None:
+        """Close every SMB connection this source opened."""
+        self.reset_connections()
+        self._smbs.clear()
 
     def warn(self, msg: str) -> None:
         self.log.warning(msg)

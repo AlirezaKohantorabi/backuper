@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import logging
+import os
 import shutil
 import sys
 import time
@@ -13,7 +15,7 @@ from pathlib import Path
 
 import yaml
 
-from backuper import __version__, jalali, logctx
+from backuper import __version__, control, jalali, logctx
 from backuper.config import AppConfig, ConfigError, load_config
 from backuper.crypto import SecretBox
 from backuper.db import Store
@@ -82,13 +84,16 @@ async def _serve_archive_only(cfg: AppConfig, store: Store) -> None:
 
     engine = Engine(cfg, store, None)
     engine.startup_cleanup()
+    control.clear_request(cfg.data_dir)
     scheduler = Scheduler(engine, store, cfg.timezone)
     scheduler.start()
     status = asyncio.create_task(StatusWriter(cfg, store, engine, scheduler).run())
+    leftovers = asyncio.create_task(engine.clean_archive_leftovers())
     try:
-        await asyncio.Event().wait()
+        await control.wait_for_restart(cfg.data_dir, engine)  # returning ends the process; systemd restarts it
     finally:
         status.cancel()
+        leftovers.cancel()
         scheduler.shutdown()
 
 
@@ -147,14 +152,15 @@ def cmd_test(args) -> int:
             rc = 1
             continue
         workdir = cfg.staging_dir / f"test-{src.id}"
+        ctx = RunContext(store, src, workdir, jalali.now_jalali(cfg.timezone))
         try:
-            ctx = RunContext(store, src, workdir, jalali.now_jalali(cfg.timezone))
             result = asyncio.run(asyncio.wait_for(get_type(src.type)(src, ctx).test(), 180))
             print(f"✓ {name}: {result}")
         except Exception as e:  # noqa: BLE001
             print(f"✗ {name}: {e.__class__.__name__}: {e}")
             rc = 1
         finally:
+            ctx.close()
             shutil.rmtree(workdir, ignore_errors=True)
     return rc
 
@@ -368,6 +374,28 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_restart(args) -> int:
+    """Ask the running service to restart (when no backup is running, or --now)."""
+    cfg = load_config(args.env, require_telegram=False)
+    control.request_restart(cfg.data_dir, now=args.now, by=f"{getpass.getuser()} (command line)")
+    print("Restart requested" + (" — now." if args.now else " — as soon as no backup is running."))
+    deadline = time.time() + 3 * control.POLL_SECONDS
+    while time.time() < deadline:
+        time.sleep(1)
+        req = control.pending_request(cfg.data_dir)
+        if req is None:
+            print("✓ The service is restarting — it's back in about 20 seconds (check: backuper status).")
+            return 0
+        if req.get("waiting"):
+            print("⏳ Backups are running — the service restarts when they finish. "
+                  "`backuper restart --now` stops them instead.")
+            return 0
+    control.clear_request(cfg.data_dir)
+    print("✗ The service didn't react — it doesn't seem to be running. Start it with: "
+          "sudo systemctl start backuper", file=sys.stderr)
+    return 1
+
+
 def cmd_list(args) -> int:
     from backuper.sources import REGISTRY
 
@@ -379,9 +407,21 @@ def cmd_list(args) -> int:
     return 0
 
 
+def default_env() -> str | None:
+    """$BACKUPER_ENV, else ./.env if present, else the .env of the installation this program belongs to
+    (so `backuper status` works from any folder)."""
+    if os.environ.get("BACKUPER_ENV"):
+        return os.environ["BACKUPER_ENV"]
+    if (Path.cwd() / ".env").exists():
+        return str(Path.cwd() / ".env")
+    app = Path(__file__).resolve().parents[1] / ".env"
+    return str(app) if app.exists() else None
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="backuper", description="Backup collector with a Telegram admin panel")
-    p.add_argument("--env", help="path to the .env file (default: ./.env)")
+    p.add_argument("--env", help="path to the .env file (default: $BACKUPER_ENV, ./.env, or the one next to the "
+                                 "program)")
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("serve", help="run the bot + scheduler (what the service runs)")
@@ -407,11 +447,14 @@ def main(argv: list[str] | None = None) -> None:
     st.add_argument("value", nargs="?")
     e = sub.add_parser("export", help="export configuration to YAML (without passwords)")
     e.add_argument("file", nargs="?")
+    rs = sub.add_parser("restart", help="restart the service (after running backups finish, or --now)")
+    rs.add_argument("--now", action="store_true", help="don't wait — stop running backups")
     args = p.parse_args(argv)
+    args.env = args.env or default_env()
 
     handlers = {"serve": cmd_serve, "gen-key": cmd_gen_key, "run": cmd_run, "test": cmd_test, "check": cmd_check,
                 "list": cmd_list, "import": cmd_import, "export": cmd_export, "credential": cmd_credential,
-                "set": cmd_set, "log": cmd_log, "status": cmd_status, None: cmd_serve}
+                "set": cmd_set, "log": cmd_log, "status": cmd_status, "restart": cmd_restart, None: cmd_serve}
     try:
         sys.exit(handlers[args.cmd](args))
     except ConfigError as e:

@@ -105,6 +105,8 @@ Commands: /start /menu /run [Name] /status /cancel /id /help, and /bind inside t
 | `Panel.start_form` / `Panel._ask` | Open a form and ask its current question. |
 | `Panel._close_prompt` | Turns an answered question into a one-line receipt (keeps the chat readable). |
 | `Panel._validate_unique` | Unique names for sources, credentials and groups. |
+| `Panel.confirm_restart` | 🔄 Restart (main menu or `/restart`): shows running backups; *When backups finish* / *Now — stop the backups* / *Restart now* / Cancel. |
+| `Panel.restart` | Writes the restart request ([control](../control.md)) with who asked and the chat to notify. |
 | `Panel.form_text` | A typed answer: parse/validate (incl. one-time run times and credential/group names), delete secret messages, move on. |
 | `Panel.form_button` | A button answer inside a form (yes/no, choice, credential/group, default, keep, empty, new credential, cancel, save). |
 | `Panel._finish` | What a completed form does, per kind (save source, credential, group, setting, admin, one-time run…). |

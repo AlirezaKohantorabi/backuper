@@ -91,4 +91,6 @@ warnings, and full tracebacks for unexpected errors.
 | `Engine._publish_report` | Posts the report to the Reports topic (unless the live progress message already turned into the report) and DMs admins on warnings/failures. |
 | `Engine._file_dict` | `PackagedFile` → JSON-able dict for history ("Resend" needs it). |
 | `Engine._ticker` | Pushes progress text while a run is going (every ~6 s for the admin's own progress message, every ~20 s for the live message in the group), only when it changed. |
+| `ARCHIVE_TRIES` / `RETRY_WAITS` / `Engine._with_retries` | Writing a zip/copy into the archive is tried up to 3 times (30 s, then 120 s apart); the source's connections are reset in between and folder copies resume. A success after a retry is noted in the report; a copy that keeps failing has its `.partial` folder removed. |
+| `Engine.clean_archive_leftovers` | At service start: removes unfinished `.uploading`/`.partial` items of interrupted runs (see [archive](destinations/archive.md)). |
 | `Engine.resend_item` | "📤 Resend" from history: fetches the zip from the archive (or `unsent`) and uploads it again, through the same upload lock. |

@@ -392,3 +392,109 @@ async def test_copy_format_makes_a_plain_dated_folder(cfg, store, tmp_path):
     assert (dirs[0] / "sub" / "f0.txt").read_bytes() == b"hello world"          # plain, not encrypted
     assert int((dirs[0] / "sub" / "f0.txt").stat().st_mtime) == int(1.7e9)    # original date kept
     assert not list(arch.rglob("*.partial"))
+
+
+async def test_archive_write_is_retried(cfg, store, tmp_path, monkeypatch):
+    """A failed write into the archive (network hiccup) is retried; the run still ends OK."""
+    monkeypatch.setattr("backuper.engine.RETRY_WAITS", (0, 0))
+    store.set_setting("archive_path", str(tmp_path / "arch"))
+    store.create_source("DB", "fake", {"sizes": [1000], "telegram": False}, set())
+    engine = Engine(cfg, store, None)
+    real, calls = engine.archive.write_direct, []
+
+    async def flaky(*a, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError("Request requires 1 credits but only 0 credits are available")
+        return await real(*a, **kw)
+
+    monkeypatch.setattr(engine.archive, "write_direct", flaky)
+    run_id = await engine.run(trigger="t")
+    item = store.run_items(run_id)[0]
+    assert len(calls) == 2 and item["status"] == OK and "attempt 2" in item["message"]
+    assert len(list((tmp_path / "arch").rglob("DB_*.zip"))) == 1
+
+
+async def test_folder_copy_resumes_after_a_failure(cfg, store, tmp_path, monkeypatch):
+    """A copy that breaks half-way is retried and only copies what's missing."""
+    monkeypatch.setattr("backuper.engine.RETRY_WAITS", (0, 0))
+    arch = tmp_path / "arch"
+    store.set_setting("archive_path", str(arch))
+    opened: list[str] = []
+
+    def opener(name: str):
+        def open_():
+            opened.append(name)
+            if name == "f1" and opened.count("f1") == 1:
+                raise ConnectionResetError("connection lost")  # not "unreadable": fails the attempt
+            return io.BytesIO(b"data")
+        return open_
+
+    async def collect(self):
+        return [Artifact(label="", meta={"format": "copy", "skip_unreadable": True}, entries=[
+            Entry(arcname=f"d/{n}.txt", size=4, mtime=1.7e9, opener=opener(n)) for n in ("f0", "f1", "f2")])]
+
+    monkeypatch.setattr(FakeSource, "collect", collect)
+    store.create_source("Edari", "fake", {}, set())
+    run_id = await Engine(cfg, store, None).run(trigger="t")
+    assert store.run_items(run_id)[0]["status"] == OK
+    assert opened == ["f0", "f1", "f1", "f2"]  # f0 wasn't copied twice
+    dirs = [p for p in arch.rglob("Edari_*") if p.is_dir()]
+    assert len(dirs) == 1 and sorted(x.name for x in (dirs[0] / "d").iterdir()) == ["f0.txt", "f1.txt", "f2.txt"]
+    assert not list(arch.rglob("*.partial"))
+
+
+async def test_folder_copy_that_keeps_failing_leaves_nothing_behind(cfg, store, tmp_path, monkeypatch):
+    monkeypatch.setattr("backuper.engine.RETRY_WAITS", (0, 0))
+    arch = tmp_path / "arch"
+    store.set_setting("archive_path", str(arch))
+
+    def broken():
+        raise ConnectionResetError("connection lost")
+
+    async def collect(self):
+        return [Artifact(label="", meta={"format": "copy", "skip_unreadable": True}, entries=[
+            Entry(arcname="a.txt", size=4, mtime=1.7e9, opener=lambda: io.BytesIO(b"data")),
+            Entry(arcname="b.txt", size=4, mtime=1.7e9, opener=broken)])]
+
+    monkeypatch.setattr(FakeSource, "collect", collect)
+    store.create_source("Edari", "fake", {}, set())
+    run_id = await Engine(cfg, store, None).run(trigger="t")
+    assert store.run_items(run_id)[0]["status"] == FAILED
+    assert not list(arch.rglob("*.partial")) and not list(arch.rglob("Edari_*"))
+
+
+async def test_unreadable_file_is_skipped_not_retried(cfg, store, tmp_path, monkeypatch):
+    arch = tmp_path / "arch"
+    store.set_setting("archive_path", str(arch))
+
+    def denied():
+        raise PermissionError("STATUS_ACCESS_DENIED")
+
+    async def collect(self):
+        return [Artifact(label="", meta={"format": "copy", "skip_unreadable": True}, entries=[
+            Entry(arcname="a.txt", size=4, mtime=1.7e9, opener=lambda: io.BytesIO(b"data")),
+            Entry(arcname="locked.xlsx", size=4, mtime=1.7e9, opener=denied)])]
+
+    monkeypatch.setattr(FakeSource, "collect", collect)
+    store.create_source("Edari", "fake", {}, set())
+    run_id = await Engine(cfg, store, None).run(trigger="t")
+    item = store.run_items(run_id)[0]
+    assert item["status"] == "warning" and "skipped locked.xlsx" in item["message"]
+    dirs = [p for p in arch.rglob("Edari_*") if p.is_dir()]
+    assert [x.name for x in dirs[0].iterdir()] == ["a.txt"]
+
+
+async def test_startup_removes_leftovers_of_interrupted_runs(cfg, store, tmp_path):
+    arch = tmp_path / "arch"
+    store.set_setting("archive_path", str(arch))
+    day = arch / "1405-07-22"
+    (day / "Edari_1405-07-22_0700.partial" / "sub").mkdir(parents=True)
+    (day / "Cash_1405-07-22_0800.zip.uploading").write_bytes(b"x")
+    (day / "Arpa_1405-07-22_0800.zip").write_bytes(b"ok")
+    (day / "New_1405-07-22_1100.zip.uploading").write_bytes(b"x")  # being written right now
+    old = 1.7e9
+    for p in (day / "Edari_1405-07-22_0700.partial", day / "Cash_1405-07-22_0800.zip.uploading"):
+        os.utime(p, (old, old))
+    await Engine(cfg, store, None).clean_archive_leftovers()
+    assert sorted(p.name for p in day.iterdir()) == ["Arpa_1405-07-22_0800.zip", "New_1405-07-22_1100.zip.uploading"]

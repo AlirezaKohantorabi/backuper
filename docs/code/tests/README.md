@@ -17,5 +17,7 @@ site's servers (see [../../LESSONS.md](../../LESSONS.md)).
 | [test_logging.py](test_logging.md) | run logs: tagged lines, only that run, steps present, handler removed, pruning |
 | [test_mssql.py](test_mssql.md) | database-name inference, grouping, labels (incl. Holoo's real file names) |
 | [test_status.py](test_status.md) | live status file: progress text, running/idle content, written locally and to the archive |
+| [test_smb_guard.py](test_smb_guard.md) | SMB: own connection per client, waiting for credits, no silent short copies |
+| [test_control.py](test_control.md) | restart requests: now, when idle, back-online notice |
 | [test_packager.py](test_packager.md) | AES zips, locked files, splitting, storing incompressible data |
 | [test_panel.py](test_panel.md) | a complete simulated admin session in the Telegram panel |

@@ -32,7 +32,12 @@ and credential from ⚙️ Settings every time, so changes apply without a resta
 | `Archive` | The archive. |
 | `Archive.__init__` | Keeps the store. |
 | `Archive.root` / `Archive.enabled` / `Archive.is_smb` | Current location; empty = Telegram only; share vs local folder. |
-| `Archive._smb` / `Archive._root_unc` | SMB client with the archive credential; normalised root path. |
+| `Archive._smb` / `Archive._root_unc` | A new SMB client (own connection, used with `with`) with the archive credential; normalised root path. |
+| `Archive._discard` | After a failure: removes the unfinished `.uploading` file / `.partial` folder over a *fresh* connection (the failed one may be dead); 3 tries, never raises. |
+| `_is_unreadable` | Is an error about the *source file* (access denied, locked, vanished, changed while read)? Only those are skipped in folder copies; connection/archive errors fail the copy so it's retried. |
+| `COPY_WORKERS` / `Archive._copy_files_parallel` | Folder copies use 4 worker threads, each with its own connection (copying many small files is mostly round trips). The first real error stops all workers. |
+| `Archive.discard_copy` | Removes `<name>.partial` when the engine gives up on a copy. |
+| `LEFTOVER_SUFFIXES` / `LEFTOVER_MIN_AGE` / `Archive._clean_leftovers_sync` / `Archive.clean_leftovers` | At service start: delete `*.uploading` files and `*.partial` folders in date folders that are older than 15 minutes (left by a run that was interrupted). |
 | `Archive._store_sync` / `Archive.store_file` | Copy a finished local zip in (see table above). |
 | `Archive._write_direct_sync` / `Archive.write_direct` | Create a file in the archive by streaming into it. |
 | `Archive._copy_tree_sync` / `Archive.copy_tree` | Plain folder copy (see table above). |
@@ -44,3 +49,13 @@ and credential from ⚙️ Settings every time, so changes apply without a resta
 | `Archive._test_sync` / `Archive.test` | Write+delete a probe file, report free space and folder count. |
 
 The `_…_sync` functions do the blocking SMB/disk work; the public `async` ones run them in a thread.
+
+## Failures and retries (since 1.7.0)
+
+- Every operation uses its own SMB connection and closes it (see [transport/smb.py](../transport/smb.md)).
+- A zip that fails while being written is removed (`.uploading`), a failed folder copy keeps its
+  `.partial` folder so the engine's retry **resumes** it (files already there with the same size and date
+  are not copied again). When the engine gives up, the `.partial` folder is deleted.
+- Files the source won't let us read (locked, access denied) are skipped and listed as warnings; any
+  other error fails the attempt.
+

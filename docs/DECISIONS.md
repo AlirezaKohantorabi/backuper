@@ -106,3 +106,24 @@ recommendation accepted by the owner.
 - **Why:** another developer must understand the project in a day, and our experience should feed future
   projects. One document per code file, enforced by a test; changelog with dates and tags; this decision log;
   a lessons log.
+
+### D20 — One SMB connection per transfer (2026-10-14, E)
+- **Alternatives:** keep `smbclient`'s shared connection per server and serialise all archive writes; retry only.
+- **Why:** the first real scheduled runs lost 11 of 17 backups to *"Request requires 1 credits but only 0
+  credits are available"*: several sources wrote into the archive at once over one shared connection, ran out
+  of SMB credits, and `smbprotocol` fails instantly instead of waiting. Separate connections remove the
+  contention (measured: 10 parallel writers, no errors, ~100 MB/s); a patch makes a shared connection wait for
+  credits and never send a 0-byte read (a fake end-of-file); every copy checks that all bytes arrived; archive
+  writes are retried 3× and folder copies resume.
+- **Cost:** a TCP connection + NTLM login per transfer (~50 ms); a small patch of library internals, guarded
+  by a test that fails if a library upgrade moves them.
+
+### D21 — Restart = the service exits and systemd starts it again (2026-10-14, O)
+- **Alternatives:** a sudoers rule for `systemctl restart backuper`.
+- **Why:** the owner wanted to restart from the bot. The unit has `Restart=always` and `NoNewPrivileges=true`
+  (sudo can't work from inside the service anyway). A request file in `data/` is written by the bot or
+  `backuper restart`; the service exits when no backup is running (or at once on "now"). No root rule needed.
+
+### D22 — Folder copies with 4 parallel workers (2026-10-14, E)
+- **Why:** Finance turned out to be 167 GB in 184,495 files; one file at a time ran at ~1,250 files/min
+  (≈ 2.5 h). Small-file copying is round-trip bound, so 4 workers (each its own connection) cut it several-fold.

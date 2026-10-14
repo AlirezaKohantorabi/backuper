@@ -76,3 +76,15 @@ def test_incompressible_big_files_are_stored_not_deflated(tmp_path):
     # AES members record the real method in the extra field; compare stored sizes instead
     assert info["compressed.bak"].compress_size >= len(rnd)
     assert info["plain.bak"].compress_size < len(zeros) // 100
+
+
+def test_short_read_fails_instead_of_making_a_truncated_zip(tmp_path):
+    class Truncating(io.BytesIO):  # "end of file" after 3 of its 10 bytes, like a 0-credit SMB read
+        def read(self, n=-1):
+            return super().read(3) if self.tell() < 3 else b""
+
+    art = Artifact(label="", entries=[Entry(arcname="f.bin", size=10, mtime=1.7e9,
+                                            opener=lambda: Truncating(b"0123456789"))])
+    with pytest.raises(PackagingError, match="incomplete"):
+        build_zip(art, tmp_path / "x.zip")
+    assert not (tmp_path / "x.zip").exists()

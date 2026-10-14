@@ -79,9 +79,11 @@ def load_config(env_file: str | os.PathLike | None = None, *, require_telegram: 
         except ValueError as e:
             raise ConfigError("API_ID must be a number") from e
 
-    data_dir = Path(get("DATA_DIR", "./data")).expanduser().resolve()
+    # Relative folders are relative to the .env file, so the CLI works from any current folder.
+    base = Path(env_file).expanduser().resolve().parent if env_file else Path.cwd()
+    data_dir = (base / Path(get("DATA_DIR", "./data")).expanduser()).resolve()
     staging_raw = get("STAGING_DIR")
-    staging_dir = Path(staging_raw).expanduser().resolve() if staging_raw else data_dir / "staging"
+    staging_dir = (base / Path(staging_raw).expanduser()).resolve() if staging_raw else data_dir / "staging"
 
     tz_name = get("TIMEZONE", "Asia/Tehran")
     try:

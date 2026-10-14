@@ -9,6 +9,38 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.7.0] — 2026-10-14
+
+### Fixed
+- **Backups lost to "Request requires 1 credits but only 0 credits are available"** (the first real scheduled
+  runs, 2026-10-14: 11 of 17 sources failed — Edari/Finance stopped half-way, both routers, Cash, Hamrahan,
+  iCan, iCan-DBs, Naghsh-Honar, HarmonyGallery). All transfers to one server shared one SMB connection; with
+  several running at once it ran out of SMB credits and the library failed instead of waiting. Now every
+  transfer has its own connection, a shared connection waits for credits, and a read can no longer come back
+  empty and look like the end of the file.
+- Unfinished `*.uploading` files and `*.partial` folders stayed in the archive after a failure (deleting them
+  used the broken connection). They're now removed over a fresh connection, and any left by an interrupted run
+  are removed when the service starts.
+- `backuper: command not found` — `install.sh` links the command into `~/.local/bin`; the CLI finds its
+  `.env` and data folder from any current folder (relative `DATA_DIR` is relative to the `.env` file).
+
+### Added
+- **Retries:** writing a zip or folder copy into the archive is tried up to 3 times (30 s, then 2 min apart);
+  folder copies **resume** where they stopped. A success after a retry is noted in the report.
+- **Completeness check:** every zip member and every copied file must have all its bytes, otherwise the
+  attempt fails (never a valid-looking truncated backup).
+- **Faster folder copies:** 4 files at a time, each on its own connection.
+- **Restart from the bot:** 🔄 Restart in the main menu or `/restart` — *when backups finish* or *now*; the bot
+  says when it's back. From the shell: `backuper restart [--now]`. No sudo: the service exits and systemd
+  starts it again.
+- **Status file lists problems:** `_backuper-status.txt` / `backuper status` now show every failed or partial
+  source of the last runs with the reason, and a pending restart.
+
+### Changed
+- Folder copies skip only files the source won't let us read (locked, access denied, vanished); any other
+  error fails the attempt so it can be retried.
+- Finance keeps the newest **9** copies (owner's choice; ~167 GB each).
+
 ## [1.6.0] — 2026-10-13
 
 ### Added

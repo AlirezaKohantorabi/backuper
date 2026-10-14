@@ -20,4 +20,6 @@ client also receives the admin panel's messages, so there is only one connection
 | `BotApp.__init__` | Creates client, sender, engine, scheduler, panel. |
 | `BotApp.admin_ids` | Owners from `.env` ∪ admins added in the bot. |
 | `BotApp.is_admin` | Gate for every panel action. |
+| `BotApp._restart_when_requested` | Waits for a restart request ([control](../control.md)), then disconnects — the process ends and systemd starts it again. |
+| `BotApp._say_back_online` | After such a restart: "✅ Back online — Backuper x.y.z" to whoever asked. |
 | `BotApp.run` | Logs in, sets the command menu, cleans up after a crash, registers handlers, starts the scheduler and the [status file](../status.md) writer, runs until disconnected. |

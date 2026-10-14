@@ -15,6 +15,7 @@ from typing import BinaryIO
 import pyzipper
 
 from backuper.models import Artifact
+from backuper.util import check_complete
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +117,7 @@ def write_zip(
             zi.external_attr = 0o644 << 16
             try:
                 with stream, zf.open(zi, "w", force_zip64=entry.size >= _ZIP64_THRESHOLD) as dst:
+                    member = len(first)
                     if first:
                         dst.write(first)
                         written += len(first)
@@ -125,8 +127,10 @@ def write_zip(
                             break
                         dst.write(buf)
                         written += len(buf)
+                        member += len(buf)
                         if progress:
                             progress(written)
+                    check_complete(stream, member, entry.arcname)
             except OSError as e:
                 # A half-written member corrupts the zip: never skip, fail the artifact.
                 raise PackagingError(f"read error in {entry.arcname}: {e}") from e

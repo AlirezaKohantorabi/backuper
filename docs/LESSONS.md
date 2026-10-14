@@ -39,6 +39,8 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 | 2026-10-07 | Requirements and architecture decisions; v1.0 built (all source types, engine, bot, installer, tests). |
 | 2026-10-10 | Real environment probed (AD domain, shares, HS vendor lock, slow link); v1.1 (archive-only sources, smarter SQL collection); first commits. |
 | 2026-10-13 | v1.2–1.4: groups and upload queue, compression, archive-only mode, router/website/SQL sources verified end to end, plain copies, one-time runs, documentation. |
+| 2026-10-13 | v1.5–1.6: troubleshooting logs, live status file and progress. |
+| 2026-10-14 | First real scheduled runs: 11 of 17 failed (SMB credits). v1.7: one connection per transfer, retries/resume, restart from the bot. |
 
 ## 3. Mistakes we made and how we caught them
 
@@ -58,6 +60,11 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 | 12 | Edits applied by scripts didn't match | earlier automatic lint fixes had changed the text the script expected | the script's own assertions | Patch scripts must assert their anchors (they did — nothing half-applied). |
 | 13 | New functions were added without docs | normal development pace | `tests/test_docs.py` failed | The guard works: docs are part of "done". |
 | 14 | Troubleshooting needed digging through mixed logs | log lines didn't say which run/source they belonged to | the owner's request | Context-tagged lines + one log file per run (v1.5). |
+| 15 | **First real scheduled runs lost 11 of 17 backups** ("Request requires 1 credits but only 0 credits are available") | `smbclient` shares one connection per server across the whole process; several sources writing into the archive at once used up its SMB credits, and `smbprotocol` raises instead of waiting. A compound request failing half-way also leaked credits for good. | the owner, looking at the archive folder the next morning | One connection per transfer + wait-for-credits patch + retries/resume + completeness checks (v1.7). Reproduced first with a 6-thread stress test (5 failed in 3.5 s), then verified 0 errors. **Lesson:** earlier real tests ran 1–4 sources; test with the *production* concurrency (a whole group at once) before the first scheduled run, and read a library's concurrency model. |
+| 16 | A short read could have produced a valid-looking but truncated zip | with 0 credits `smbclient` sends a 0-byte read, which looks like end-of-file | reading the library code while fixing #15 | Every copy checks bytes read = file size. **Lesson:** "EOF" from a network stream must be verified against the expected size. |
+| 17 | Failures went unnoticed until someone opened the folder | archive-only mode has no Telegram report, and the status file only showed run totals | the owner | The status file lists every failed source with the reason (v1.7). **Lesson:** every mode needs a place where failures are visible without digging. |
+| 18 | The service ran the old version after "restart done" | the restart happened minutes before the update was installed | the version in the startup log line | Restart button / `backuper restart` (v1.7). **Lesson:** after deploying, confirm the running version, not just that it runs. |
+| 19 | `backuper status` → *command not found*; then the CLI looked for `data/` in the current folder | the command lived only in `.venv/bin`; relative `DATA_DIR` resolved against the current folder | the owner | `~/.local/bin` link; paths relative to the `.env` file. **Lesson:** run every documented command the way the user will (from their home folder). |
 
 ## 4. What we discovered about the environment (and how it changed the plan)
 
@@ -116,6 +123,10 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 | SMB listing 6,912 files | 72 s → 2 s (metadata from the listing) |
 | Server-side copy within the file server | 85 MB in 0.1 s |
 | Full test run (router + 4 SQL servers, 8 databases) | 1 min 30 s |
+| SMB: 6 threads writing over **one** connection (before 1.7) | 5 of 6 failed within 3.5 s (credits) |
+| SMB: 10 threads × 384 MB, one connection each (1.7) | 0 errors, 3.8 GB in 39 s (~100 MB/s) |
+| Listing Finance after the rights fix | 184,495 files, 167.5 GB in 209 s (was 11,759 files / 13.3 GB visible) |
+| Folder copy, one file at a time (same server) | ~1,250 files/min, ~1 GB/min per copy |
 
 ## 6. What worked well
 
@@ -152,7 +163,12 @@ Grant-SmbShareAccess -Name 'Edari' -AccountName $bot -AccessRight Read -Force | 
 icacls (Get-SmbShare -Name 'Edari').Path /grant "${bot}:(OI)(CI)RX"
 ```
 
-## Open items at the time of writing (2026-10-13)
+- **Finance really is 167 GB** (184,495 files): after `icacls D:\Finance /grant …:(OI)(CI)RX /T` the bot
+  sees everything. Folders with inheritance turned off had hidden most of it.
+- **The HS (Hamrahan System) backup shares on .250/.251 are readable — and writable — by any domain user:**
+  the bot reached them with its plain domain account and no setup on those servers. Worth restricting.
+
+## Open items at the time of writing (2026-10-14)
 
 - Telegram api_id (my.telegram.org "ERROR").
 - Hamrahan System SQL logins (vendor).
