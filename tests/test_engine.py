@@ -588,3 +588,22 @@ async def test_deleting_a_zip_also_deletes_its_checksums(cfg, store, tmp_path):
     assert await Engine(cfg, store, None).archive.delete("1405-07-25/A.zip")
     assert not list((arch / "1405-07-25").iterdir())
     assert not await Engine(cfg, store, None).archive.delete("1405-07-25/A.zip")  # already gone: False, no crash
+
+
+async def test_service_start_leaves_a_running_shell_run_alone(cfg, store):
+    """`backuper run` in a shell while the service restarts: its staging folder and DB row must survive."""
+    from backuper.engine import _lock_run_dir
+
+    live_id = store.create_run("cli", "1405-07-25")
+    dead_id = store.create_run("group Daily", "1405-07-25")
+    live = cfg.staging_dir / f"run-{live_id}"
+    dead = cfg.staging_dir / f"run-{dead_id}"
+    lock = _lock_run_dir(live)                      # held, as by the other process
+    (live / "router.rsc").write_text("x")
+    dead.mkdir(parents=True)
+    Engine(cfg, store, None).startup_cleanup()
+    assert (live / "router.rsc").exists() and not dead.exists()
+    assert store.get_run(live_id)["status"] == "running" and store.get_run(dead_id)["status"] == "interrupted"
+    lock.close()
+    Engine(cfg, store, None).startup_cleanup()
+    assert not live.exists()

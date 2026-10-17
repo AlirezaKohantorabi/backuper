@@ -15,6 +15,7 @@ uploading); a source that is already running in another run is skipped.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 import shutil
 import time
@@ -125,6 +126,29 @@ class _Pending:
     stored: list[tuple[Artifact, PackagedFile]] = field(default_factory=list)
 
 
+def _lock_run_dir(run_dir: Path):
+    """Create a run's staging folder and hold an exclusive lock on it for the run's lifetime (released by
+    closing the returned file — or automatically if the process dies)."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fh = open(run_dir / ".lock", "w")  # noqa: SIM115 - kept open on purpose
+    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return fh
+
+
+def _run_dir_in_use(run_dir: Path) -> bool:
+    """Is another process's run holding this staging folder's lock?"""
+    lock = run_dir / ".lock"
+    if not lock.exists():
+        return False
+    with open(lock, "a") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(fh, fcntl.LOCK_UN)
+    return False
+
+
 class Engine:
     def __init__(self, cfg: AppConfig, store: Store, sender: TelegramSender | None):
         self.cfg = cfg
@@ -144,9 +168,17 @@ class Engine:
 
     # -- housekeeping -----------------------------------------------------------
     def startup_cleanup(self) -> None:
-        self.store.mark_stale_runs()
+        """After a crash/restart: forget runs that died with the old process and delete their staging folders —
+        but not those of a run still going in another process (`backuper run` from the shell), which holds the
+        lock on its folder (2026-10-17: a restart deleted a shell run's folder mid-download)."""
+        alive = []
         for d in self.cfg.staging_dir.glob("run-*"):
-            shutil.rmtree(d, ignore_errors=True)
+            if _run_dir_in_use(d):
+                alive.append(int(d.name.split("-", 1)[1]))
+                log.info("leaving %s alone: that run is still going in another process", d.name)
+            else:
+                shutil.rmtree(d, ignore_errors=True)
+        self.store.mark_stale_runs(alive)
         shutil.rmtree(self.cfg.staging_dir / "resend", ignore_errors=True)
 
     async def clean_archive_leftovers(self) -> None:
@@ -192,6 +224,7 @@ class Engine:
         for src in sources:
             self._active[src.id] = run_id
         run_dir = self.cfg.staging_dir / f"run-{run_id}"
+        run_lock = _lock_run_dir(run_dir)
         prog = RunProgress(run_id=run_id, trigger=trigger,
                            sources={s.id: SourceProgress(s.name) for s in sources})
         self.runs[run_id] = prog
@@ -282,6 +315,7 @@ class Engine:
             if ticker:
                 await ticker
             self._keep_unsent(results)
+            run_lock.close()  # releases the lock
             shutil.rmtree(run_dir, ignore_errors=True)
             for src in sources:
                 self._active.pop(src.id, None)

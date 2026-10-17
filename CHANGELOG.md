@@ -9,6 +9,13 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.8.1] — 2026-10-17
+
+### Fixed
+- A service (re)start deleted the staging folder of a `backuper run` still going in a shell (found when a
+  restart 2 s after a shell run made both router backups fail). Runs now lock their folder; the startup
+  clean-up leaves locked folders and their runs alone.
+
 ## [1.8.0] — 2026-10-17
 
 ### Added

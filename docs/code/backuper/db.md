@@ -58,6 +58,6 @@ so the rest of the program only ever sees plaintext in memory.
 | `Store.add_run_item` / `update_run_item_files` | Per-source result of a run (files JSON is updated by "Resend"). |
 | `Store.list_runs` / `get_run` / `run_items` / `get_run_item` | History pages. |
 | `Store.last_item_for_source` | Last result of a source (shown on its page). |
-| `Store.mark_stale_runs` | At startup: runs left "running" by a crash become "interrupted". |
+| `Store.mark_stale_runs` | At startup: runs left "running" by a crash become "interrupted" (except runs still alive in another process). |
 | `Store.prune_runs` | Keep only the newest 500 runs. |
 | `Store.list_admins` / `add_admin` / `remove_admin` / `admin_ids` | Extra admins. |

@@ -33,4 +33,5 @@ End-to-end runs with a fake source type and a fake Telegram sender, against a re
 | `test_run_waits_for_an_unreachable_archive` | An archive that's down at the start (power cut) is waited for, then the run works. |
 | `test_archive_that_stays_down_fails_the_run_without_backing_up` | If it stays down, every source fails clearly and no backup is made on the servers. |
 | `test_deleting_a_zip_also_deletes_its_checksums` | Deleting a zip removes its `.sha256`; deleting it again returns "already gone" instead of crashing (a real bug the test found). |
+| `test_service_start_leaves_a_running_shell_run_alone` | A service restart keeps a shell run's staging folder and "running" status (its folder is locked), cleans dead runs' folders. |
 | `test_startup_removes_leftovers_of_interrupted_runs` | Old `.uploading`/`.partial` items are removed at start; finished zips and very recent leftovers are kept. |

@@ -72,7 +72,8 @@ warnings, and full tracebacks for unexpected errors.
 | `Engine.__init__` | Wires config, store, sender (or `None` = archive-only) and the archive. |
 | `Engine.busy` | True while any run is active. |
 | `Engine.render_status` | Progress of every active run (for `/status`). |
-| `Engine.startup_cleanup` | Marks crashed runs "interrupted", deletes leftover staging folders. |
+| `Engine.startup_cleanup` | Marks crashed runs "interrupted", deletes leftover staging folders — except those of a run still going in another process (a `backuper run` in a shell), found by its lock. |
+| `_lock_run_dir` / `_run_dir_in_use` | Each run holds an exclusive lock (`flock`) on `staging/run-N/.lock` while it runs; the lock disappears with the process. 2026-10-17: a service restart deleted the staging folder of a shell run 2 seconds after it started — both router backups failed. |
 | `Engine._prune_unsent` | Deletes `staging/unsent` zips older than the archive retention. |
 | `Engine.run` | The run described above. `upload_from="HH:MM"` (groups only) delays phase 2 until that time; manual and one-time runs upload right away. Returns the run id. |
 | `Engine._describe` | One-line, secret-free summary of a source for the run log. |

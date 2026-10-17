@@ -415,9 +415,11 @@ class Store:
                        "WHERE ri.source_id=? ORDER BY ri.id DESC LIMIT 1", (source_id,))
         return rows[0] if rows else None
 
-    def mark_stale_runs(self) -> None:
-        """Runs left 'running' by a crash/restart."""
-        self._x("UPDATE runs SET status='interrupted', finished_at=? WHERE status='running'", (_now(),))
+    def mark_stale_runs(self, alive: Iterable[int] = ()) -> None:
+        """Runs left 'running' by a crash/restart — except `alive` ones (still running in another process)."""
+        keep = list(alive)
+        self._x("UPDATE runs SET status='interrupted', finished_at=? WHERE status='running'"
+                + (f" AND id NOT IN ({','.join('?' * len(keep))})" if keep else ""), (_now(), *keep))
 
     def prune_runs(self, keep: int = 500) -> None:
         self._x("DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT ?)", (keep,))
