@@ -31,6 +31,20 @@ say "Creating virtualenv and installing dependencies"
 uv venv --quiet --allow-existing --python 3.12 .venv
 uv pip install --quiet --python .venv/bin/python -e .
 
+# 2b. rclone (cloud copy) — pinned version, checksum verified, installed next to the venv's Python
+RCLONE_VERSION=v1.75.2
+if [[ ! -x .venv/bin/rclone ]] || ! .venv/bin/rclone version 2>/dev/null | grep -q "rclone ${RCLONE_VERSION}"; then
+  say "Installing rclone ${RCLONE_VERSION}"
+  TMP="$(mktemp -d)"
+  ZIP="rclone-${RCLONE_VERSION}-linux-amd64.zip"
+  curl -sSfL -o "$TMP/$ZIP" "https://downloads.rclone.org/${RCLONE_VERSION}/${ZIP}"
+  curl -sSfL -o "$TMP/SHA256SUMS" "https://downloads.rclone.org/${RCLONE_VERSION}/SHA256SUMS"
+  (cd "$TMP" && grep " ${ZIP}\$" SHA256SUMS | sha256sum -c - >/dev/null)
+  .venv/bin/python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$TMP/$ZIP" "$TMP"
+  install -m 755 "$TMP/rclone-${RCLONE_VERSION}-linux-amd64/rclone" .venv/bin/rclone
+  rm -rf "$TMP"
+fi
+
 # 3. .env with a fresh encryption key
 if [[ ! -f .env ]]; then
   say "Creating .env"

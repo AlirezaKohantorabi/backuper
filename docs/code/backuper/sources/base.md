@@ -37,6 +37,7 @@ engine does everything else: zipping, encryption, archive, Telegram, retention s
 | `SourceType.all_fields` | Type fields + `COMMON_FIELDS`. |
 | `SourceType.secret_keys` | Keys stored encrypted. |
 | `SourceType.credential_keys` | Keys that reference credentials. |
+| `COMMON_FIELDS` → `cloud` | *Send to cloud* (default on; not shown for plain copies, which are never sent). |
 | `RunContext.reset_connections` / `RunContext.close` | Every SMB client made by `RunContext.smb` is remembered; the engine closes them when the source is done (and resets them before a retry). |
 | `SourceType.describe` | One-line summary for lists (`host`, `share` or `path` by default). |
 | `SourceType.collect` | **Required.** Fetch/prepare the data; return Artifacts. |

@@ -21,6 +21,7 @@ from backuper.crypto import SecretBox
 from backuper.db import Store
 from backuper.fields import FieldError, parse_values
 from backuper.settings import SETTINGS_BY_KEY
+from backuper.util import human_size
 
 log = logging.getLogger("backuper")
 
@@ -376,6 +377,78 @@ def cmd_status(args) -> int:
     return 0
 
 
+CLOUD_CREDENTIAL = "google-drive"
+
+
+def cmd_cloud(args) -> int:
+    """Cloud copy: `login` (Google Drive sign-in), `test`, `sync` (upload what's missing now), `ls`."""
+    import getpass
+    import json
+
+    from backuper.destinations.archive import Archive
+    from backuper.destinations.cloud import Cloud, CloudError, drive_authorize_command
+
+    cfg = load_config(args.env, require_telegram=False)
+    setup_logging(cfg, console_level="WARNING" if args.action != "sync" else None)
+    store = open_store(cfg)
+    cloud = Cloud(store, Archive(store))
+
+    if args.action == "login":
+        print("Google Drive sign-in for the cloud copy.\n")
+        client_id = input("Your own Google OAuth client ID (Enter = rclone's shared one): ").strip()
+        client_secret = getpass.getpass("Its client secret (input hidden): ").strip() if client_id else ""
+        print("\nOn a PC with a web browser:\n"
+              "  1. download rclone from https://rclone.org/downloads/ (Windows: unzip, open a terminal there)\n"
+              f"  2. run:   {drive_authorize_command(client_id, client_secret)}\n"
+              "  3. sign in with the company's Google account and allow access\n"
+              "  4. copy everything rclone prints between the ---> and <--- lines\n")
+        raw = getpass.getpass("Paste it here (input hidden): ").strip()
+        try:
+            token = json.loads(raw)
+            if not token.get("refresh_token"):
+                raise ValueError("no refresh_token")
+        except (ValueError, AttributeError) as e:
+            print(f"That isn't the token rclone prints ({e}). Nothing saved.", file=sys.stderr)
+            return 1
+        blob = {"token": token, **({"client_id": client_id, "client_secret": client_secret} if client_id else {})}
+        store.save_credential(CLOUD_CREDENTIAL, "Google Drive", json.dumps(blob),
+                              "rclone token for the cloud copy (backuper cloud login)")
+        store.set_setting("cloud_credential", CLOUD_CREDENTIAL)
+        print(f"Saved (credential '{CLOUD_CREDENTIAL}', encrypted). Testing…")
+        args.action = "test"
+
+    async def main() -> int:
+        try:
+            if args.action == "test":
+                print(await cloud.test(kind="drive" if cloud.kind == "off" else None))
+                if cloud.kind == "off":
+                    print("Uploads are still OFF. Switch them on when the storage is ready:  backuper set cloud_type drive")
+            elif args.action == "sync":
+                if not cloud.enabled:
+                    print("The cloud copy is off (backuper set cloud_type drive).", file=sys.stderr)
+                    return 1
+                excluded = {s.name for s in store.list_sources() if not s.config.get("cloud", True)}
+                res = await cloud.sync(excluded)
+                print(res.summary())
+                for rel, err in res.failed.items():
+                    print(f"   ✗ {rel}: {err}")
+                return 1 if res.failed else 0
+            elif args.action == "ls":
+                present = await cloud._list_cloud(await asyncio.to_thread(cloud._env, cloud.kind if cloud.enabled else "drive"))  # noqa: SLF001
+                by_day: dict[str, list[int]] = {}
+                for rel, (size, _) in present.items():
+                    by_day.setdefault(rel.split("/", 1)[0], []).append(size)
+                for day in sorted(by_day):
+                    print(f"{day}: {len(by_day[day])} file(s), {human_size(sum(by_day[day]))}")
+                print(f"{sum(len(v) for v in by_day.values())} file(s), {human_size(sum(sum(v) for v in by_day.values()))} in the cloud.")
+            return 0
+        except CloudError as e:
+            print(f"✗ {e}", file=sys.stderr)
+            return 1
+
+    return asyncio.run(main())
+
+
 def cmd_once(args) -> int:
     """Schedule, list or cancel one-time runs (picked up by the running service within 30 s)."""
     cfg = load_config(args.env, require_telegram=False)
@@ -527,6 +600,8 @@ def main(argv: list[str] | None = None) -> None:
     st.add_argument("value", nargs="?")
     e = sub.add_parser("export", help="export configuration to YAML (without passwords)")
     e.add_argument("file", nargs="?")
+    cl = sub.add_parser("cloud", help="cloud copy: login (Google Drive), test, sync (upload now), ls")
+    cl.add_argument("action", choices=("login", "test", "sync", "ls"))
     on = sub.add_parser("once", help="run sources/groups once at a given time (or --list / --cancel ID)")
     on.add_argument("when", nargs="?", help="14:30 · '1405/07/25 22:00' · '2026-10-17 22:00' · +30m · +2h")
     on.add_argument("names", nargs="*", help="source or group names")
@@ -544,7 +619,7 @@ def main(argv: list[str] | None = None) -> None:
     handlers = {"serve": cmd_serve, "gen-key": cmd_gen_key, "run": cmd_run, "test": cmd_test, "check": cmd_check,
                 "list": cmd_list, "import": cmd_import, "export": cmd_export, "credential": cmd_credential,
                 "set": cmd_set, "log": cmd_log, "status": cmd_status, "restart": cmd_restart, "verify": cmd_verify,
-                "once": cmd_once, None: cmd_serve}
+                "once": cmd_once, "cloud": cmd_cloud, None: cmd_serve}
     try:
         sys.exit(handlers[args.cmd](args))
     except ConfigError as e:

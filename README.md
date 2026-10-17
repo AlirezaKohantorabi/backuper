@@ -81,6 +81,7 @@ backuper status            # what's running now, problems in the last runs, next
 backuper log [RUN]         # a run's detailed log
 backuper verify [DATE]     # unzip archived zips again and check them
 backuper once WHEN NAME... # one-time run of sources/groups (--list, --cancel ID)
+backuper cloud login|test|sync|ls   # off-site copy to Google Drive
 backuper restart [--now]   # restart the service (waits for running backups) — no sudo
 backuper list | import FILE | export [FILE] | gen-key
 ```

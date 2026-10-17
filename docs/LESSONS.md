@@ -188,8 +188,13 @@ icacls (Get-SmbShare -Name 'Edari').Path /grant "${bot}:(OI)(CI)RX"
   visible to our login. The owner then created a SQL login anyway (for manual backups): SQL Server 2019 Enterprise
   on both, `db_backupoperator` on all databases. .251 also has a database **Ramezani** that nothing backs up.
 
+- **Google from Iran (Oct 2026):** the Drive API answers this server (HTTP 401 = "sign in first", not blocked),
+  and Google's sign-in endpoints are reachable. rclone 1.75 warns that its shared Google client ID "will stop
+  working during 2026" — a long-term setup needs its own OAuth client ID.
+- **Daily volume for an off-site copy** (everything except Edari/Finance): ~32 GB of zips (Hamrahan 11.4,
+  iCan Upload 8.6, harmony.ir 7.2, the rest ~4.5) → ~1.5 h of upload per night at ~21 GB/h; 14 days ≈ 450 GB.
+
 ## Open items at the time of writing (2026-10-17)
 
-- Telegram: cancelled by the owner for now (api_id impossible); archive-only. Cloud copy: options suggested.
-- `D:\AutoBackup` shares on .250/.251 (owner).
+- Telegram: cancelled (api_id impossible). Cloud copy to Google Drive built (1.10), waiting for the Drive plan and the sign-in.
 - Domain controller time source: Group Policy + Hyper-V time provider (see §4).

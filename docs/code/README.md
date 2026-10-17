@@ -71,6 +71,7 @@ files in the order below.
 | [backuper/bot/panel.py](backuper/bot/panel.md) | every menu, button and command of the admin panel |
 | [backuper/destinations/\_\_init\_\_.py](backuper/destinations/__init__.md) | package marker |
 | [backuper/destinations/archive.py](backuper/destinations/archive.md) | the dated archive (SMB share or local folder) |
+| [backuper/destinations/cloud.py](backuper/destinations/cloud.md) | off-site copy: mirror the newest zips to Google Drive (rclone), MD5-checked |
 | [backuper/destinations/telegram.py](backuper/destinations/telegram.md) | uploads, topics, reports over MTProto |
 | [backuper/sources/\_\_init\_\_.py](backuper/sources/__init__.md) | registry of source types |
 | [backuper/sources/base.py](backuper/sources/base.md) | `SourceType` base class + `RunContext` |

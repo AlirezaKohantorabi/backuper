@@ -121,6 +121,7 @@ class PackagedFile:
     raw_size: int = 0
     send_telegram: bool = True
     verified: int = 0               # files unzipped again and found identical (SHA-256) after archiving
+    cloud: bool = False             # uploaded to the cloud copy (and MD5-checked) by this run
 
 
 @dataclass

@@ -109,6 +109,20 @@ In ⚙️ Settings set at least: **zip password** (keep a copy outside Telegram)
 
 First full run: bot → ▶️ Run all now (or `backuper run`). Check 📊 History and the archive folder.
 
+## 4b. Cloud copy (Google Drive)
+
+1. `backuper cloud login` — it prints a command for a PC with a browser:
+   download rclone there (https://rclone.org/downloads/), run the command, sign in with the company's Google
+   account, and paste back what rclone prints (input hidden; stored encrypted). It then uploads, checks and
+   deletes a small test file.
+2. When the Drive has enough room (≈ 32 GB per day of zips at the first site; 14 days ≈ 450 GB):
+   `backuper set cloud_type drive`, optionally `backuper set cloud_keep_days 30`.
+3. From then on every run ends with the cloud copy (`☁ cloud: …` in the report); `backuper cloud sync` does it now.
+
+rclone's *shared* Google client ID is being retired (2026). If sign-in stops working, create your own OAuth
+client ID (Google Cloud Console → APIs & Services → Credentials → OAuth client ID, type *Desktop app*, with the
+Drive API enabled) and give it to `backuper cloud login`.
+
 ## 5. Upgrading
 
 ```bash

@@ -23,6 +23,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `backuper credential NAME [-u USER]` | Create/update a credential; the password is typed hidden. |
 | `backuper set KEY [VALUE]` | Change a setting; secrets are typed hidden. |
 | `backuper verify [DATE] [ZIP…] [--all]` | Unzip archived zips again (in memory) and check them with the zip's own AES authentication / CRC (default: the newest date folder). Exit code 1 if anything is damaged. |
+| `backuper cloud login|test|sync|ls` | Cloud copy: sign in to Google Drive (token typed hidden, stored encrypted), test (upload/check/delete a small file, show free space), upload what's missing now, list what's in the cloud per day. |
 | `backuper once WHEN NAME…` / `--list` / `--cancel ID` | One-time run of sources or groups at a time (`14:30`, `'1405/07/25 22:00'`, `+2h`); the running service picks it up within 30 s. Replaces the bot's ⏱ Run once. |
 | `backuper restart [--now]` | Restart the service — once no backup is running, or `--now`. No sudo (see [control](control.md)). |
 | `backuper gen-key` | Print a new `SECRET_KEY`. |
@@ -48,6 +49,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `cmd_log` | `log` — prints `data/logs/runs/run-<id>.log`. |
 | `cmd_status` | `status` — prints `data/status.txt` and warns if it's old (service not running). |
 | `cmd_verify` | `verify`. |
+| `CLOUD_CREDENTIAL` / `cmd_cloud` | `cloud` (the Drive sign-in is stored as credential `google-drive`). |
 | `cmd_once` | `once` — names may be sources or groups (a group = its enabled members). |
 | `cmd_restart` | `restart` — writes the request, then reports "restarting", "waiting for backups" or "service not running". |
 | `default_env` | Which `.env` to use: `--env`, `$BACKUPER_ENV`, `./.env`, else the installation's own — so `backuper status` works from any folder. |

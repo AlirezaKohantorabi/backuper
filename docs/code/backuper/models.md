@@ -29,7 +29,7 @@ turns them into `PackagedFile`s and `ItemResult`s, [telegram](destinations/teleg
 | `Entry.from_path` | Build an `Entry` for a local file (used after downloads: MikroTik, cPanel, SFTP). |
 | `Artifact` | Everything one zip (or one plain copy) is made of: `label` (item name, e.g. database), `entries`, `meta` (e.g. `group`, `format`, `skip_unreadable`, `delivered`), `warnings`, `cleanup` (temp files to delete after packaging). |
 | `Artifact.total_size` | Sum of the entries' sizes (progress + disk checks). |
-| `PackagedFile` | The result of packaging one artifact: file/folder name, size, local path (if staged), `archive_rel` ("<date>/<name>" in the archive), upload state, `send_telegram`, `verified` (number of files unzipped again and found identical). Stored as JSON in `run_items.files` so "Resend" can find it later. |
+| `PackagedFile` | The result of packaging one artifact: file/folder name, size, local path (if staged), `archive_rel` ("<date>/<name>" in the archive), upload state, `send_telegram`, `verified` (number of files unzipped again and found identical), `cloud` (uploaded to the cloud copy and MD5-checked by this run). Stored as JSON in `run_items.files` so "Resend" can find it later. |
 | `ItemResult` | Outcome of one source in one run: status, message, files, warnings, timings. |
 | `ItemResult.total_size` | Sum of its files' sizes (reports, history). |
 | `should_compress` | `False` for already-compressed formats by extension (zip, gz, jpg, mp4, docx…). |

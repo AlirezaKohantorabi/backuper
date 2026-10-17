@@ -31,6 +31,7 @@ from backuper import jalali, logctx
 from backuper.config import AppConfig
 from backuper.db import Store
 from backuper.destinations.archive import Archive
+from backuper.destinations.cloud import Cloud
 from backuper.destinations.telegram import TelegramSender, esc
 from backuper.models import (
     FAILED, OK, PARTIAL, SKIPPED, STATUS_ICON, WARNING, Artifact, ItemResult, PackagedFile, SourceRecord,
@@ -155,6 +156,7 @@ class Engine:
         self.store = store
         self.sender = sender
         self.archive = Archive(store)
+        self.cloud = Cloud(store, self.archive)
         self._upload_lock = asyncio.Lock()     # one upload at a time, across all runs
         self._active: dict[int, int] = {}      # source id -> run id currently processing it
         self.runs: dict[int, RunProgress] = {}
@@ -295,6 +297,10 @@ class Engine:
                     archive_note = f"⚠️ archive retention failed: {esc(short_error(e))}"
                     log.exception("archive prune failed")
             self._prune_unsent()
+            # Phase 4 — off-site copy: mirror the archive's newest zips to the cloud (one upload at a time overall)
+            if self.cloud.enabled:
+                cloud_note = await self._cloud_sync(results, prog)
+                archive_note = "\n".join(filter(None, [archive_note, cloud_note]))
         except BaseException as e:
             for t in tasks.values():
                 t.cancel()
@@ -346,6 +352,41 @@ class Engine:
         logctx.run_var.reset(run_token)
         logctx.prune_run_logs(self.cfg.log_dir)
         return run_id
+
+    async def _cloud_sync(self, results: list[ItemResult], prog: RunProgress) -> str:
+        """Upload what the cloud copy is missing (this run's zips and any that failed earlier), check every
+        upload by MD5, drop old date folders there. A failed upload of this run's zip makes its source 🟠
+        partial; the next run tries it again by itself."""
+        excluded = {s.name for s in self.store.list_sources() if not s.config.get("cloud", True)}
+
+        def on_file(i: int, n: int, rel: str, size: int) -> None:
+            prog.upload_index, prog.upload_total, prog.upload_name = i, n, "☁ " + rel.split("/", 1)[1]
+            prog.upload_size, prog.upload_done, prog.upload_started = size, 0, time.monotonic()
+
+        def progress(done: int) -> None:
+            prog.upload_done = done
+
+        if self._upload_lock.locked():
+            prog.phase = "waiting for another run's uploads"
+        async with self._upload_lock:
+            prog.phase = "uploading to the cloud"
+            try:
+                cres = await self.cloud.sync(excluded, on_file, progress)
+            except Exception as e:  # noqa: BLE001 - the archive copy is fine; the next run tries again
+                log.exception("cloud copy failed")
+                return f"⚠️ cloud: {esc(short_error(e))} — the next run tries again"
+            finally:
+                prog.upload_total = 0
+        done = {rel for rel, _ in cres.uploaded}
+        for res in results:
+            for f in res.files:
+                if f.archive_rel in done:
+                    f.cloud = True
+                elif f.archive_rel in cres.failed:
+                    if res.status in (OK, WARNING):
+                        res.status = PARTIAL
+                    res.message = "; ".join(filter(None, [res.message, f"cloud: {cres.failed[f.archive_rel]}"]))
+        return esc(cres.summary())
 
     async def _wait_for_archive(self, prog: RunProgress) -> str | None:
         """If the archive can't be reached (its server is off or rebooting), wait for it — up to ARCHIVE_WAIT —
@@ -764,7 +805,7 @@ class Engine:
             if r.files:
                 line += " — " + ", ".join(
                     f"{esc(f.label) + ' ' if f.label else ''}{human_size(f.size)}"
-                    + (" ✓ verified" if f.verified else "") for f in r.files)
+                    + (" ✓ verified" if f.verified else "") + (" ☁" if f.cloud else "") for f in r.files)
             if r.message:
                 line += f"\n    ↳ {esc(r.message)}"
             for w in r.warnings[:5]:

@@ -31,6 +31,16 @@ SETTINGS_FIELDS: list[Field] = [
     Field("upload_retries", "Upload retries", INT, default=3, min=1, max=10),
     Field("concurrency", "Parallel sources", INT, default=3, min=1, max=16,
           help="How many sources are collected and zipped at the same time."),
+    Field("cloud_type", "Cloud copy", CHOICE, default="off", choices=("off", "drive", "local"),
+          help="Off-site copy of the newest zips (replaces Telegram): 'drive' = Google Drive (sign in with "
+               "`backuper cloud login`), 'local' = a folder on this server such as a mounted USB disk. "
+               "Plain folder copies (Edari/Finance) are never sent."),
+    Field("cloud_credential", "Cloud sign-in", CREDENTIAL, required=False, default="",
+          help="Credential holding the Google Drive sign-in (made by `backuper cloud login`)."),
+    Field("cloud_folder", "Cloud folder", TEXT, required=False, default="Backuper",
+          help="Drive: the folder name (created by the bot). Local: an absolute path, e.g. /mnt/usb/Backuper."),
+    Field("cloud_keep_days", "Cloud days to keep", INT, default=14, min=1, max=3650,
+          help="How many of the newest date folders are kept in the cloud; older ones are deleted there."),
     Field("retry_failed_after", "Retry failed sources after (min)", INT, default=60, min=0, max=24 * 60,
           help="A scheduled run's failed sources are tried again this many minutes later (power cut, network "
                "outage, server reboot…). 0 = off."),

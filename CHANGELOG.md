@@ -9,6 +9,24 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.10.0] — 2026-10-17
+
+### Added
+- **Cloud copy (replaces the Telegram uploads):** after every run the newest *Cloud days to keep* (14) date folders
+  of the archive are mirrored to Google Drive with rclone — smallest zip first, one at a time, each upload
+  checked by MD5 against the archive; missing or failed uploads are caught up by the next run; older days are
+  removed from the cloud. Plain folder copies (Edari/Finance) are never sent; any source can opt out
+  (*Send to cloud*). Off until `cloud_type` is set (the free 15 GB is less than one day of zips).
+- `backuper cloud login | test | sync | ls`; Google sign-in via `rclone authorize` on a PC with a browser
+  (own OAuth client ID supported — rclone's shared one is being retired). Tokens are stored encrypted; rclone
+  gets its configuration from environment variables only.
+- `install.sh` installs a pinned, checksum-verified rclone into `.venv/bin`.
+- Settings: `cloud_type` (off/drive/local), `cloud_credential`, `cloud_folder`, `cloud_keep_days`.
+
+### Documented
+- The *Ramezani* database on .251 is intentionally not backed up (owner). The vendor's HS backups run at 00:00,
+  so the 08:00 run picks up that night's backup.
+
 ## [1.9.0] — 2026-10-17
 
 ### Added

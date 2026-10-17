@@ -41,6 +41,8 @@ COMMON_FIELDS: list[Field] = [
     Field("telegram", "Send to Telegram", BOOL, default=True, show_if=("format", ("zip", None)),
           help="Off = keep it only in the archive (for data too big for Telegram). The zip is then written "
                "straight into the archive, without a temporary copy on this server."),
+    Field("cloud", "Send to cloud", BOOL, default=True, show_if=("format", ("zip", None)),
+          help="Off = this source's zips are not copied to the cloud (only when a cloud copy is set up)."),
     Field("archive_keep", "Archive copies to keep", INT, default=0, min=0, max=3650,
           help="Keep only the newest N backups of this source in the archive. 0 = follow the global "
                "'Archive days to keep'. Useful for very large folders.",

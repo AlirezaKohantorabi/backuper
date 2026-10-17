@@ -9,9 +9,11 @@
 ## 1. What it is
 
 Backuper collects backups from many places on a company network and the internet, packs each one into
-an encrypted zip (or a plain dated folder), keeps them in a dated archive on a file server, and sends them
-to a private Telegram group. It is administered entirely from a Telegram bot, and it is built to be
-reused: a new company = clone, install, new bot, add servers (in the bot or from a YAML file).
+an encrypted zip (or a plain dated folder), keeps them in a dated archive on a file server, and copies the
+zips off-site to Google Drive (the original plan — a private Telegram group with a Telegram admin bot — is
+still in the code, but my.telegram.org never issued the API id it needs, so the first site runs
+"archive-only" + cloud copy and is administered from the command line). It is built to be reused: a new
+company = clone, install, add servers from a YAML file.
 
 **Backed up today:** SQL Server databases (by collecting the backups a server already makes, or by making
 them itself), MikroTik routers (full config export with secrets + binary backup), Windows folders (zip or
@@ -32,7 +34,9 @@ must not stay on hosting servers; dates in the Persian calendar; reusable in oth
                           cPanel/DA        ─► panel API: full backup ─► wait ─► FTPS download ─► delete on host
                        ─► AES-256 zip ─► E:\Backuper\1405-07-22\<Source>_<item>_1405-07-22_0800.zip
                        ─► (wait for "Upload from" time, if set)
-                       ─► Telegram: smallest file first, one at a time, ≤ 1.95 GB per part
+                       ─► unzip again + compare SHA-256 of every file (bad zip → made again)
+                       ─► cloud copy: newest zips to Google Drive, smallest first, MD5-checked
+                          (Telegram, if configured: smallest first, ≤ 1.95 GB per part)
                        ─► delete old backups on the servers ("keep last N"), archive keeps 14 days
                        ─► report in the 📊 Reports topic; DM to admins if something failed
 anytime  ▶️ Run now / ⏱ one-time run ─► same steps, uploads as soon as it's done
@@ -48,7 +52,7 @@ One Python 3.12 process (`backuper serve`, run by systemd) with one asyncio even
 | Control | `bot/panel.py`, `bot/forms.py`, `scheduler.py` | Admin panel, forms, timers. |
 | Core | `engine.py`, `packager.py` | A run: collect → package → store → upload → retention → report. |
 | Plugins | `sources/*` | One class per kind of backup; declares fields, implements `collect()`. |
-| Outputs | `destinations/archive.py`, `destinations/telegram.py` | Dated archive; Telegram uploads/topics/reports. |
+| Outputs | `destinations/archive.py`, `destinations/cloud.py`, `destinations/telegram.py` | Dated archive; off-site cloud copy (rclone); Telegram uploads/topics/reports. |
 | I/O | `transport/smb.py`, `transport/ssh.py`, `transport/remote.py` | SMB2/3, SSH/SFTP, FTP/FTPS. |
 | Data | `db.py`, `crypto.py`, `models.py`, `fields.py`, `settings.py`, `config.py` | SQLite store, encryption, schemas. |
 
@@ -149,6 +153,7 @@ database's secrets can only be decrypted with `SECRET_KEY`).
 | What's running now? | `E:\Backuper\_backuper-status.txt` (open in Explorer), `backuper status`, the bot's `/status`, the live message in 📊 Reports |
 | Run now | bot ▶️ (all / a group / a source) or `backuper run [Name…]` |
 | Check archived backups | `backuper verify` (newest date folder), `backuper verify 1405-07-25`, `backuper verify --all` — unzips each zip in memory and checks it (every zip is also compared file by file right after it's made). |
+| Cloud copy | `backuper cloud login` (once), `backuper set cloud_type drive`, `backuper cloud test` · `sync` · `ls`. Keep N days: `backuper set cloud_keep_days 14`. A source opts out with `cloud: false`. |
 | One-time run | `backuper once 22:00 Hamrahan-Manual` · `backuper once '1405/07/26 02:00' Daily` · `backuper once --list` · `--cancel ID` |
 | Failed sources | retried automatically an hour later, up to 3 times (settings `retry_failed_after`, `retry_failed_times`); a run waits up to 3 h for an unreachable archive. |
 | Check config | `backuper check`, `backuper test [Name…]`, `backuper list` |

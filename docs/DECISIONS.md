@@ -162,3 +162,19 @@ recommendation accepted by the owner.
   is untouched), written into the vendor's AutoBackup folders under our own name pattern, which the daily
   collect sources' patterns (`<db>_backup_*.bak`) don't match. `backuper once` replaces the bot's ⏱ menu.
 
+### D28 — Cloud copy instead of Telegram: rclone mirror to Google Drive (2026-10-17, O)
+- **Context:** Telegram uploads are impossible (no API id); the owner wants Google Drive for everything except
+  Edari/Finance and will buy a large Drive plan; free Drive is 15 GB (~half a day of zips).
+- **Alternatives:** Iranian S3 object storage; a USB/NAS copy; the Google Drive API in our own code.
+- **Why rclone + mirror:** rclone handles Google's sign-in, resumable chunked uploads and retries, and also
+  speaks S3, WebDAV, SFTP and local folders — switching provider later is a setting, not code. Mirroring
+  ("make the cloud equal the newest N days of the archive") instead of "upload this run's files" means failed
+  uploads and outages are caught up automatically without bookkeeping. Scope `drive.file` limits rclone to
+  the files it created. Every upload is MD5-compared with the archive.
+- **Risks:** rclone's shared Google client ID is being retired (own client ID supported); Google may limit
+  services for Iranian users; a Drive login token could delete the copy — keep an offline copy too.
+
+### D29 — Ramezani database not backed up; vendor job at 00:00 (2026-10-17, O)
+- The owner said the **Ramezani** database on .251 isn't needed. The vendor's automatic HS backups run at
+  **00:00**, so the 08:00 Daily run already picks up that night's backup — no extra schedule needed.
+

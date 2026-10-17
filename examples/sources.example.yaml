@@ -6,6 +6,8 @@ settings:
   archive_credential: fileserver
   archive_keep_days: 14
   topic_mode: category                      # category | source | none
+  cloud_type: 'off'                         # off | drive (Google Drive, `backuper cloud login`) | local
+  cloud_keep_days: 14                       # newest N date folders kept in the cloud
 
 groups:                                     # each group starts at its time; uploads smallest file first
   - name: Daily
@@ -72,3 +74,7 @@ sources:
     transfer: ftps
     transfer_credential: ftp-example     # cPanel FTP login
     schedule: "0 4 * * 5"                # no group: its own time, Fridays 04:00
+
+  - name: Backuper                       # this server itself: database, .env, local/ (to rebuild it)
+    type: self
+    group: Daily

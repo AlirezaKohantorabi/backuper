@@ -8,6 +8,7 @@ Installer/upgrader, run from the repository folder on the bot server.
 |---|---|
 | 1. `uv` | Installs the `uv` package manager into `~/.local/bin` if missing. **Why uv:** works without root and without the `python3-venv`/`pip` system packages (a fresh Ubuntu server had neither), and can even download Python itself. |
 | 2. venv + deps | `.venv` with Python 3.12 and the package (`pip install -e .`). |
+| 2b. rclone | A pinned rclone release (for the [cloud copy](backuper/destinations/cloud.md)) downloaded from rclone.org, checked against its `SHA256SUMS`, installed as `.venv/bin/rclone` (no root needed; the service finds it next to its Python). |
 | 3. `.env` | Created from `.env.example` with a fresh `SECRET_KEY` (`chmod 600`) — only if it doesn't exist. |
 | 4. systemd | Writes `/etc/systemd/system/backuper.service` from `deploy/backuper.service` (user and folder filled in), enables it, and starts it if `.env` has a bot token and API id. Needs sudo once. `--no-service` skips this. |
 

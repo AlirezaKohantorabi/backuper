@@ -335,6 +335,18 @@ class Archive:
             names = [p.name for p in (Path(self.root) / folder).iterdir() if p.is_file()]
         return sorted(n for n in names if n.lower().endswith(".zip"))
 
+    def _list_zip_sizes_sync(self, folder: str) -> list[tuple[str, int]]:
+        if self.is_smb:
+            with self._smb() as smb:
+                files = smb.list_files(unc_join(self._root_unc(), folder))
+            return sorted((f.name, f.size) for f in files if f.name.lower().endswith(".zip"))
+        return sorted((p.name, p.stat().st_size) for p in (Path(self.root) / folder).iterdir()
+                      if p.is_file() and p.name.lower().endswith(".zip"))
+
+    async def list_zip_sizes(self, folder: str) -> list[tuple[str, int]]:
+        """[(name, size)] of the zips in a date folder (for the cloud mirror)."""
+        return await asyncio.to_thread(self._list_zip_sizes_sync, folder)
+
     async def list_zips(self, folder: str) -> list[str]:
         """Names of the zips in a date folder."""
         return await asyncio.to_thread(self._list_zips_sync, folder)
