@@ -28,6 +28,13 @@ PowerShell, run as administrator on a Windows server, once per folder. Gives the
 bot server only. Prints the resulting `\\server\share` paths.
 Per-server one-liners used at the first site are in [../LESSONS.md](../LESSONS.md#permissions).
 
+## `docs/windows/verify-backup.ps1`
+
+After restoring by hand: extract a zip with 7-Zip/WinRAR, then
+`.\verify-backup.ps1 <name>.zip.sha256 [<extracted folder>]` hashes every extracted file and compares it with
+the SHA-256 taken before zipping. Prints MISSING / DIFFERENT lines, or "All N file(s) are identical"; exit
+code 1 on a problem. Handles paths longer than 260 characters; Windows PowerShell 5.1 or PowerShell 7.
+
 ## `docs/mssql/01-create-backup-login.sql`
 
 Creates the SQL login the bot uses for "run BACKUP" sources (Windows/domain account by default, or a SQL

@@ -133,3 +133,19 @@ recommendation accepted by the owner.
 - **Why:** the link to the other site drops for many minutes during working hours; restarting an 11 GB read
   costs an hour each time. Continuing at the same byte (file unchanged) needs no extra disk and keeps the
   zip streaming straight into the archive.
+
+### D24 — Verify every zip by unzipping it again (2026-10-17, O)
+- **Owner's request:** hash the files before zipping and compare after unzipping.
+- **How:** the "before" hash is taken from the same bytes that are zipped (a second read of an 11 GB file over
+  the slow site link would cost another 35 minutes and could read a file that changed meanwhile). The check reads
+  the zip back from the archive — so it also proves what's on the archive disk — and stores `<zip>.sha256` for
+  later checks and manual restores. Cost: one extra LAN read per zip (~10 GB/day, a few minutes).
+- **Not yet for plain folder copies** (Edari/Finance): that would mean reading 190 GB twice per day; offered to
+  the owner as an option.
+
+### D25 — Wait for the archive, then retry failed sources later (2026-10-17, E)
+- **Why:** a power cut on the file server failed every source of both morning runs within minutes, and nothing
+  tried again. Waiting (up to 3 h, checking every minute) covers reboots and short outages without making
+  backups on the servers that can't be stored; automatic retries (1 h later, up to 3×) cover everything else
+  that fails for a while (site link outages). Both are cheap and visible in the status file.
+

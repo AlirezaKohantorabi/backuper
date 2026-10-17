@@ -51,6 +51,7 @@ class OneOff:
     run_at: datetime
     status: str          # pending | running | done | missed | cancelled
     run_id: int | None = None
+    retry: int = 0       # 0 = made by a person; N = automatic retry no. N of failed sources
 
 
 @dataclass
@@ -118,6 +119,7 @@ class PackagedFile:
     entries_count: int = 0
     raw_size: int = 0
     send_telegram: bool = True
+    verified: int = 0               # files unzipped again and found identical (SHA-256) after archiving
 
 
 @dataclass

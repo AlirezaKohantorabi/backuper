@@ -22,12 +22,14 @@ from backuper import jalali
 from backuper.db import Store
 from backuper.fields import unc_server
 from backuper.models import Artifact
+from backuper.packager import verify_zip
 from backuper.transport.smb import SMB, SMBError, is_permanent
 from backuper.transport.smb import join as unc_join
 from backuper.util import check_complete, human_size
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
+CHECKSUM_SUFFIX = ".sha256"  # next to every zip: the SHA-256 of each file inside (see packager.checksum_file)
 LEFTOVER_SUFFIXES = (".uploading", ".partial")
 COPY_WORKERS = 4  # parallel file copies (each with its own connection) for plain folder copies
 LEFTOVER_MIN_AGE = 15 * 60  # seconds; younger leftovers may belong to a copy still running elsewhere
@@ -156,11 +158,14 @@ class Archive:
                         smb.rmtree(path)
                     else:
                         smb.remove(path)
+                        if smb.exists(path + CHECKSUM_SUFFIX):
+                            smb.remove(path + CHECKSUM_SUFFIX)
             else:
                 p = Path(self.root) / folder / name
                 shutil.rmtree(p) if p.is_dir() else p.unlink()
+                p.with_name(p.name + CHECKSUM_SUFFIX).unlink(missing_ok=True)
             return True
-        except (FileNotFoundError, SMBError):
+        except SMBError:  # SMBError already covers FileNotFoundError (an OSError)
             return False
 
     def _copy_tree_sync(self, art: Artifact, folder: str, dirname: str, skip_unreadable: bool,
@@ -310,6 +315,60 @@ class Archive:
         """Store an artifact as a plain folder instead of a zip. Returns (relative path, bytes copied, warnings)."""
         return await asyncio.to_thread(self._copy_tree_sync, art, folder, dirname, skip_unreadable, progress)
 
+    def _verify_sync(self, rel: str, expected: dict[str, str], password: str,
+                     progress: Callable[[int], None] | None) -> int:
+        folder, name = rel.split("/", 1)
+        if self.is_smb:
+            with self._smb() as smb, smb.open_read(unc_join(self._root_unc(), folder, name)) as f:
+                return verify_zip(f, expected, password=password, progress=progress)
+        with open(Path(self.root) / folder / name, "rb") as f:
+            return verify_zip(f, expected, password=password, progress=progress)
+
+    async def verify(self, rel: str, expected: dict[str, str], *, password: str = "",
+                     progress: Callable[[int], None] | None = None) -> int:
+        """Unzip a zip in the archive (streamed, nothing written) and compare every file's SHA-256 with
+        `expected`. Raises packager.IntegrityError on a difference. Returns the number of files checked."""
+        return await asyncio.to_thread(self._verify_sync, rel, expected, password, progress)
+
+    def _write_checksums_sync(self, rel: str, text: str) -> None:
+        folder, name = rel.split("/", 1)
+        data = text.encode("utf-8")
+        if self.is_smb:
+            with self._smb() as smb:
+                smb.write_bytes(unc_join(self._root_unc(), folder, name + CHECKSUM_SUFFIX), data)
+        else:
+            (Path(self.root) / folder / (name + CHECKSUM_SUFFIX)).write_bytes(data)
+
+    async def write_checksums(self, rel: str, text: str) -> None:
+        """Store `<zip>.sha256` next to the zip."""
+        await asyncio.to_thread(self._write_checksums_sync, rel, text)
+
+    def _read_checksums_sync(self, rel: str) -> str | None:
+        folder, name = rel.split("/", 1)
+        try:
+            if self.is_smb:
+                with self._smb() as smb, smb.open_read(unc_join(self._root_unc(), folder, name + CHECKSUM_SUFFIX)) as f:
+                    return f.read().decode("utf-8")
+            return (Path(self.root) / folder / (name + CHECKSUM_SUFFIX)).read_text(encoding="utf-8")
+        except SMBError:  # SMBError already covers FileNotFoundError (an OSError)
+            return None
+
+    async def read_checksums(self, rel: str) -> str | None:
+        """The `.sha256` text of a zip, or None if it has none (zips made before 1.8)."""
+        return await asyncio.to_thread(self._read_checksums_sync, rel)
+
+    def _list_zips_sync(self, folder: str) -> list[str]:
+        if self.is_smb:
+            with self._smb() as smb:
+                names = [n for n, is_dir, _ in smb.list_entries(unc_join(self._root_unc(), folder)) if not is_dir]
+        else:
+            names = [p.name for p in (Path(self.root) / folder).iterdir() if p.is_file()]
+        return sorted(n for n in names if n.lower().endswith(".zip"))
+
+    async def list_zips(self, folder: str) -> list[str]:
+        """Names of the zips in a date folder."""
+        return await asyncio.to_thread(self._list_zips_sync, folder)
+
     async def delete(self, rel: str) -> bool:
         return await asyncio.to_thread(self._delete_sync, rel)
 
@@ -351,6 +410,10 @@ class Archive:
             p = Path(self.root)
             names = [c.name for c in p.iterdir() if c.is_dir()] if p.exists() else []
         return sorted((n for n in names if jalali.parse_folder(n)), key=lambda n: jalali.parse_folder(n))
+
+    async def list_date_folders(self) -> list[str]:
+        """Jalali date folders in the archive, oldest first."""
+        return await asyncio.to_thread(self._list_date_folders_sync)
 
     def _prune_sync(self, keep: int) -> list[str]:
         folders = self._list_date_folders_sync()
@@ -396,6 +459,17 @@ class Archive:
         date are ever touched."""
         keep = int(self.store.get_setting("archive_keep_days") or 14)
         return await asyncio.to_thread(self._prune_sync, keep)
+
+    def _ping_sync(self) -> None:
+        if self.is_smb:
+            with self._smb() as smb:
+                smb.list_entries(self._root_unc())  # raises if the server or share can't be reached
+        elif not Path(self.root).parent.exists():
+            raise ArchiveError(f"{Path(self.root).parent} doesn't exist")
+
+    async def ping(self) -> None:
+        """Raise if the archive can't be reached right now (used to wait for it at the start of a run)."""
+        await asyncio.wait_for(asyncio.to_thread(self._ping_sync), timeout=120)
 
     def _test_sync(self) -> str:
         probe = ".backuper-write-test"

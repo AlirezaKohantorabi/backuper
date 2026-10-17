@@ -28,4 +28,9 @@ End-to-end runs with a fake source type and a fake Telegram sender, against a re
 | `test_folder_copy_resumes_after_a_failure` | A folder copy that breaks half-way is retried and only copies the missing files. |
 | `test_folder_copy_that_keeps_failing_leaves_nothing_behind` | After the last attempt fails, no `.partial` folder is left. |
 | `test_unreadable_file_is_skipped_not_retried` | A locked / access-denied file is skipped with a warning; the rest is copied. |
+| `test_archived_zip_is_unzipped_and_compared` | An archived zip is verified and gets its `.sha256` file. |
+| `test_zip_that_fails_the_check_is_deleted_and_made_again` | A zip whose check fails is deleted and made again; the run still ends ✅. |
+| `test_run_waits_for_an_unreachable_archive` | An archive that's down at the start (power cut) is waited for, then the run works. |
+| `test_archive_that_stays_down_fails_the_run_without_backing_up` | If it stays down, every source fails clearly and no backup is made on the servers. |
+| `test_deleting_a_zip_also_deletes_its_checksums` | Deleting a zip removes its `.sha256`; deleting it again returns "already gone" instead of crashing (a real bug the test found). |
 | `test_startup_removes_leftovers_of_interrupted_runs` | Old `.uploading`/`.partial` items are removed at start; finished zips and very recent leftovers are kept. |

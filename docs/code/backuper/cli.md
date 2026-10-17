@@ -22,6 +22,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `backuper export [FILE]` | Current configuration as YAML, **without** passwords. |
 | `backuper credential NAME [-u USER]` | Create/update a credential; the password is typed hidden. |
 | `backuper set KEY [VALUE]` | Change a setting; secrets are typed hidden. |
+| `backuper verify [DATE] [ZIP…] [--all]` | Unzip archived zips again and compare every file with the SHA-256 stored next to it (default: the newest date folder). Exit code 1 if anything is damaged. |
 | `backuper restart [--now]` | Restart the service — once no backup is running, or `--now`. No sudo (see [control](control.md)). |
 | `backuper gen-key` | Print a new `SECRET_KEY`. |
 
@@ -30,7 +31,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | Name | What it does |
 |---|---|
 | `log` | The application's root logger name (`backuper`). |
-| `setup_logging` | Console (journald) + rotating file `data/logs/backuper.log` (10 MB × 5) at `LOG_LEVEL`, every line tagged `[run#N source]` (see [logctx](logctx.md)); the root logger passes DEBUG so per-run logs get detail; quiets noisy libraries. |
+| `setup_logging` | (optional quieter console level for interactive commands) Console (journald) + rotating file `data/logs/backuper.log` (10 MB × 5) at `LOG_LEVEL`, every line tagged `[run#N source]` (see [logctx](logctx.md)); the root logger passes DEBUG so per-run logs get detail; quiets noisy libraries. |
 | `open_store` | Opens the database with the `SECRET_KEY` box. |
 | `cmd_gen_key` | `gen-key`. |
 | `cmd_serve` | `serve` — chooses bot mode or archive-only mode. |
@@ -45,6 +46,7 @@ administrators on the server (setup, bulk import, tests, entering passwords with
 | `cmd_list` | `list`. |
 | `cmd_log` | `log` — prints `data/logs/runs/run-<id>.log`. |
 | `cmd_status` | `status` — prints `data/status.txt` and warns if it's old (service not running). |
+| `cmd_verify` | `verify`. |
 | `cmd_restart` | `restart` — writes the request, then reports "restarting", "waiting for backups" or "service not running". |
 | `default_env` | Which `.env` to use: `--env`, `$BACKUPER_ENV`, `./.env`, else the installation's own — so `backuper status` works from any folder. |
 | `main` | Argument parsing; prints `ConfigError` nicely and exits 2. |

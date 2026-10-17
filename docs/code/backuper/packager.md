@@ -18,6 +18,13 @@ set — and splits big zips for Telegram without writing the parts to disk.
 - **Zip64** is forced for entries ≥ 1 GB (sizes of live files can change while reading).
 - **Locked files:** with `skip_unreadable`, files that can't be opened are skipped with a warning;
   a read error *in the middle* of a file always fails the artifact (a half-written member would corrupt the zip).
+- **Integrity (1.8):** while a file is zipped, the SHA-256 of its bytes is computed from the very same
+  bytes that go into the zip (`hashes=`; no second read of the source over a slow link). Right after the zip
+  is stored, `verify_zip` unzips it again (streamed, nothing written) and compares every file's SHA-256;
+  the zip library's own CRC and AES authentication are checked on the way. The hashes are kept next to the zip
+  as `<name>.zip.sha256` (`checksum_file`) so the check can be repeated any time (`backuper verify`) or after a
+  manual restore on Windows ([verify-backup.ps1](../scripts.md)). Found by its test: pyzipper raises its *own*
+  `BadZipFile` class (not the standard library's) for a damaged AES member — both are caught (`_BAD_ZIP`).
 - **Splitting:** Telegram (MTProto) accepts ≤ 2000 MiB per file. `part_ranges` + `FileSlice` upload
   byte ranges of the zip as `name.zip.001`, `.002`… — concatenated they are the original zip, and 7-Zip
   opens `.001` directly.
@@ -28,9 +35,12 @@ set — and splits big zips for Telegram without writing the parts to disk.
 |---|---|
 | `CHUNK`, `_ZIP64_THRESHOLD`, `_AUTO_STORE_MIN`, `_SAMPLE_SKIP`, `_SAMPLE` | Read chunk size and the thresholds above. |
 | `PackagingError` | Packaging failed (unreadable file, read error mid-file, nothing readable). |
+| `IntegrityError` / `_BAD_ZIP` | A file that comes out of a finished zip is missing, extra, can't be unzipped, or has a different SHA-256 / both zip libraries' "bad zip" errors. |
+| `verify_zip` | Unzip every member and compare its SHA-256 with the expected one; returns the number of files. |
+| `checksum_file` / `parse_checksums` | `{path: sha256}` ↔ the `.sha256` text (`<sha256> *<path>` per line, the format of `sha256sum -c`). |
 | `_zip_datetime` | File mtime → zip timestamp (zip can't store dates before 1980). |
-| `build_zip` | Zip into a local file: writes `name.zip.part`, renames when complete (never leaves a half zip). |
-| `write_zip` | The actual zipping into any open seekable file object — a local file or a file on the SMB archive share (used for archive-only sources, so nothing touches the staging disk). |
+| `build_zip` | Zip into a local file: writes `name.zip.part`, renames when complete (never leaves a half zip). Passes `hashes` through. |
+| `write_zip` | Fills `hashes` with each member's SHA-256 if given. The actual zipping into any open seekable file object — a local file or a file on the SMB archive share (used for archive-only sources, so nothing touches the staging disk). |
 | `part_ranges` | `[(offset, length), …]` covering a file in parts of at most N bytes. |
 | `part_name` | `x.zip` for a single part, `x.zip.001`… for several. |
 | `FileSlice` | Read-only, seekable window into a file (one part of a big zip). |

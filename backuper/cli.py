@@ -25,7 +25,7 @@ from backuper.settings import SETTINGS_BY_KEY
 log = logging.getLogger("backuper")
 
 
-def setup_logging(cfg: AppConfig) -> None:
+def setup_logging(cfg: AppConfig, console_level: str | None = None) -> None:
     """Console (journald) + rotating file at LOG_LEVEL; every line tagged [run#N source].
     The root logger lets DEBUG through so each run's own log file (see logctx) gets the details."""
     logctx.install()
@@ -34,7 +34,7 @@ def setup_logging(cfg: AppConfig) -> None:
     root.setLevel(logging.DEBUG)
     stream = logging.StreamHandler()
     stream.setFormatter(fmt)
-    stream.setLevel(cfg.log_level)
+    stream.setLevel(console_level or cfg.log_level)
     fileh = RotatingFileHandler(cfg.log_dir / "backuper.log", maxBytes=10 * 1024 * 1024, backupCount=5,
                                 encoding="utf-8")
     fileh.setFormatter(fmt)
@@ -42,6 +42,8 @@ def setup_logging(cfg: AppConfig) -> None:
     root.handlers[:] = [stream, fileh]
     for noisy in ("telethon", "smbprotocol", "spnego", "asyncssh", "httpx", "apscheduler"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    # Windows resets the TCP connection when we close it: "socket aborted by peer … treating as EOF" is normal.
+    logging.getLogger("smbprotocol.transport").setLevel(logging.ERROR)
 
 
 def open_store(cfg: AppConfig) -> Store:
@@ -271,7 +273,7 @@ def cmd_import(args) -> int:
           f"{len(doc.get('credentials') or [])} credential(s), "
           f"{len(doc.get('sources') or [])} source(s) with {len(errors)} error(s).")
     if not args.dry_run:
-        print("Restart the service (sudo systemctl restart backuper) to load new schedules.")
+        print("Restart the service (backuper restart) to load new schedules.")
     return 1 if errors else 0
 
 
@@ -374,6 +376,51 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_verify(args) -> int:
+    """Unzip archived zips again and compare every file with the SHA-256 stored next to the zip."""
+    from backuper.destinations.archive import Archive
+    from backuper.packager import parse_checksums
+    from backuper.util import human_duration, short_error
+
+    cfg = load_config(args.env, require_telegram=False)
+    setup_logging(cfg, console_level="WARNING")
+    store = open_store(cfg)
+    archive = Archive(store)
+    password = store.get_setting("zip_password") or ""
+
+    async def main() -> int:
+        folders = await archive.list_date_folders()
+        if args.all:
+            todo = folders
+        elif args.folder:
+            todo = [args.folder]
+        else:
+            todo = folders[-1:]
+        checked = bad = skipped = 0
+        for folder in todo:
+            names = args.name or await archive.list_zips(folder)
+            print(f"{folder}:")
+            for name in names:
+                rel = f"{folder}/{name}"
+                text = await archive.read_checksums(rel)
+                if text is None:
+                    skipped += 1
+                    print(f"   ·  {name}: no {name}.sha256 (made before 1.8) — skipped")
+                    continue
+                t0 = time.time()
+                try:
+                    n = await archive.verify(rel, parse_checksums(text), password=password)
+                    checked += 1
+                    print(f"   ✓  {name}: {n} file(s) identical to the originals ({human_duration(time.time() - t0)})")
+                except Exception as e:  # noqa: BLE001
+                    bad += 1
+                    print(f"   ✗  {name}: {short_error(e)}")
+        print(f"{checked} zip(s) OK, {bad} damaged, {skipped} without checksums.")
+        return 1 if bad else 0
+
+    return asyncio.run(main())
+
+
 def cmd_restart(args) -> int:
     """Ask the running service to restart (when no backup is running, or --now)."""
     cfg = load_config(args.env, require_telegram=False)
@@ -447,6 +494,11 @@ def main(argv: list[str] | None = None) -> None:
     st.add_argument("value", nargs="?")
     e = sub.add_parser("export", help="export configuration to YAML (without passwords)")
     e.add_argument("file", nargs="?")
+    vf = sub.add_parser("verify", help="unzip archived zips and compare every file with its SHA-256 "
+                                       "(default: newest date folder)")
+    vf.add_argument("folder", nargs="?", help="date folder, e.g. 1405-07-25")
+    vf.add_argument("name", nargs="*", help="only these zips")
+    vf.add_argument("--all", action="store_true", help="every date folder in the archive")
     rs = sub.add_parser("restart", help="restart the service (after running backups finish, or --now)")
     rs.add_argument("--now", action="store_true", help="don't wait — stop running backups")
     args = p.parse_args(argv)
@@ -454,7 +506,8 @@ def main(argv: list[str] | None = None) -> None:
 
     handlers = {"serve": cmd_serve, "gen-key": cmd_gen_key, "run": cmd_run, "test": cmd_test, "check": cmd_check,
                 "list": cmd_list, "import": cmd_import, "export": cmd_export, "credential": cmd_credential,
-                "set": cmd_set, "log": cmd_log, "status": cmd_status, "restart": cmd_restart, None: cmd_serve}
+                "set": cmd_set, "log": cmd_log, "status": cmd_status, "restart": cmd_restart, "verify": cmd_verify,
+                None: cmd_serve}
     try:
         sys.exit(handlers[args.cmd](args))
     except ConfigError as e:

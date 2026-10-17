@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS one_offs (
     status TEXT NOT NULL DEFAULT 'pending',
     created_by INTEGER,
     run_id INTEGER,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    retry INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS admins (
     user_id INTEGER PRIMARY KEY,
@@ -108,6 +109,8 @@ class Store:
         cols = {r["name"] for r in self._q("PRAGMA table_info(groups)")}
         if "upload_at" not in cols:  # databases created before "upload from" existed
             self._x("ALTER TABLE groups ADD COLUMN upload_at TEXT NOT NULL DEFAULT ''")
+        if "retry" not in {r["name"] for r in self._q("PRAGMA table_info(one_offs)")}:  # before 1.8
+            self._x("ALTER TABLE one_offs ADD COLUMN retry INTEGER NOT NULL DEFAULT 0")
         self._migrate_main_schedule()
 
     def _migrate_main_schedule(self) -> None:
@@ -353,11 +356,14 @@ class Store:
     @staticmethod
     def _oneoff(r: sqlite3.Row) -> OneOff:
         return OneOff(id=r["id"], label=r["label"], source_ids=json.loads(r["source_ids"]),
-                      run_at=datetime.fromisoformat(r["run_at"]), status=r["status"], run_id=r["run_id"])
+                      run_at=datetime.fromisoformat(r["run_at"]), status=r["status"], run_id=r["run_id"],
+                      retry=r["retry"] or 0)
 
-    def add_one_off(self, label: str, source_ids: list[int], run_at: datetime, created_by: int | None) -> int:
-        return self._x("INSERT INTO one_offs(label, source_ids, run_at, created_by, created_at) VALUES(?,?,?,?,?)",
-                       (label, json.dumps(source_ids), run_at.isoformat(), created_by, _now()))
+    def add_one_off(self, label: str, source_ids: list[int], run_at: datetime, created_by: int | None,
+                    retry: int = 0) -> int:
+        return self._x("INSERT INTO one_offs(label, source_ids, run_at, created_by, created_at, retry) "
+                       "VALUES(?,?,?,?,?,?)",
+                       (label, json.dumps(source_ids), run_at.isoformat(), created_by, _now(), retry))
 
     def list_one_offs(self, statuses: Iterable[str] = ("pending",)) -> list[OneOff]:
         st = list(statuses)

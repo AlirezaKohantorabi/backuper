@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from backuper.bot.forms import FormState, prompt
 from backuper.engine import Engine
 from backuper.scheduler import Scheduler
@@ -78,3 +80,23 @@ def test_one_off_runs_are_scheduled_or_marked_missed(cfg, store):
     assert f"once:{future}" in ids and f"once:{recent}" in ids and f"once:{old}" not in ids
     assert store.get_one_off(old).status == "missed"
     assert any(label.startswith("⏱ once") for _, label, _ in sched.next_runs())
+
+
+def test_failed_sources_are_retried_later(cfg, store):
+    from backuper.models import FAILED, OK
+
+    a = store.create_source("A", "smb_folder", {}, set())
+    b = store.create_source("B", "smb_folder", {}, set())
+    run_id = store.create_run("group Daily", "1405-07-25")
+    store.add_run_item(run_id, a, "A", FAILED, "No route to host", [], 0, 1)
+    store.add_run_item(run_id, b, "B", OK, "", [], 0, 1)
+    sched = Scheduler(Engine(cfg, store, None), store, cfg.timezone)
+
+    oid = sched.retry_failed(run_id, 1)
+    o = store.get_one_off(oid)
+    assert o.source_ids == [a] and o.retry == 1 and "retry 1/3" in o.label   # only the failed source
+    minutes = (o.run_at - datetime.now(cfg.timezone)).total_seconds() / 60
+    assert 59 <= minutes <= 61                                                # default: an hour later
+    assert sched.retry_failed(run_id, 4) is None                              # at most 3 tries
+    store.set_setting("retry_failed_after", 0)
+    assert sched.retry_failed(run_id, 1) is None                              # 0 = off

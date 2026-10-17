@@ -148,6 +148,8 @@ database's secrets can only be decrypted with `SECRET_KEY`).
 | Logs | per run: bot 📄 Log / `backuper log [id]`; service: `journalctl -u backuper -f`, `data/logs/backuper.log` |
 | What's running now? | `E:\Backuper\_backuper-status.txt` (open in Explorer), `backuper status`, the bot's `/status`, the live message in 📊 Reports |
 | Run now | bot ▶️ (all / a group / a source) or `backuper run [Name…]` |
+| Check archived backups | `backuper verify` (newest date folder), `backuper verify 1405-07-25`, `backuper verify --all` — unzips and compares every file's SHA-256. After a manual restore: `docs/windows/verify-backup.ps1`. |
+| Failed sources | retried automatically an hour later, up to 3 times (settings `retry_failed_after`, `retry_failed_times`); a run waits up to 3 h for an unreachable archive. |
 | Check config | `backuper check`, `backuper test [Name…]`, `backuper list` |
 | Move to another company | clone + `./install.sh` + new bot + `backuper import company.yaml` + passwords. |
 | Restore | open the zip with 7-Zip/WinRAR (parts: put all `.zip.0NN` in one folder, open `.001`), then restore the `.bak` / `.backup` / `.rsc` / panel archive as described in [SETUP.md](SETUP.md#restoring). |

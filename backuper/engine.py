@@ -34,7 +34,7 @@ from backuper.destinations.telegram import TelegramSender, esc
 from backuper.models import (
     FAILED, OK, PARTIAL, SKIPPED, STATUS_ICON, WARNING, Artifact, ItemResult, PackagedFile, SourceRecord,
 )
-from backuper.packager import build_zip, write_zip
+from backuper.packager import IntegrityError, build_zip, checksum_file, verify_zip, write_zip
 from backuper.settings import FOLDER_FORMATS
 from backuper.sources import RunContext, SourceError, SourceType, get_type
 from backuper.util import hashtag, human_duration, human_size, safe_filename, short_error
@@ -48,6 +48,8 @@ def _speed(nbytes: int, seconds: float) -> str:
     return f"{nbytes / 2**20 / seconds:.1f} MB/s" if seconds > 0.05 else "instant"
 MIN_FREE_BYTES = 1024 * 1024 * 1024
 ARCHIVE_TRIES = 3            # attempts to write one zip/copy into the archive
+ARCHIVE_WAIT = 3 * 3600      # at the start of a run, wait this long for an unreachable archive (power cut, reboot)
+ARCHIVE_POLL = 60            # …checking every minute
 RETRY_WAITS = (30, 120)      # seconds before the 2nd and 3rd attempt
 T = TypeVar("T")
 
@@ -220,13 +222,22 @@ class Engine:
         tasks: dict[int, asyncio.Task] = {}
         archive_note = ""
         try:
+            to_run = sources
+            down = await self._wait_for_archive(prog)
+            if down:
+                # Still unreachable: don't make backups on the servers that can't be stored anywhere.
+                for src in sources:
+                    results.append(ItemResult(source_id=src.id, source_name=src.name, status=FAILED,
+                                              message=f"archive unreachable for {human_duration(ARCHIVE_WAIT)}: {down}"))
+                    prog.sources[src.id].begin("failed")
+                to_run = []
             # Phase 1 — collect, zip, archive (several sources in parallel)
             sem = asyncio.Semaphore(int(self.store.get_setting("concurrency") or 3))
             tasks = {src.id: asyncio.create_task(self._process_source(src, now, folder, run_dir, sem, prog, pending))
-                     for src in sources}
+                     for src in to_run}
             # Phase 2 — as soon as every Telegram-bound source is ready: upload, smallest first.
             # Archive-only sources (e.g. huge folders) keep zipping meanwhile.
-            tg = [tasks[s.id] for s in sources if self._uploads(s)]
+            tg = [tasks[s.id] for s in to_run if self._uploads(s)]
             tg_results = list(await asyncio.gather(*tg))
             await self._wait_until(upload_not_before, prog)
             if self._upload_lock.locked():
@@ -301,6 +312,51 @@ class Engine:
         logctx.run_var.reset(run_token)
         logctx.prune_run_logs(self.cfg.log_dir)
         return run_id
+
+    async def _wait_for_archive(self, prog: RunProgress) -> str | None:
+        """If the archive can't be reached (its server is off or rebooting), wait for it — up to ARCHIVE_WAIT —
+        instead of failing every source at once. Returns None when it's reachable, else the last error."""
+        if not self.archive.enabled:
+            return None
+        deadline, since, error = time.monotonic() + ARCHIVE_WAIT, None, None
+        while True:
+            try:
+                await self.archive.ping()
+                if since is not None:
+                    log.info("archive is reachable again after %s — starting", human_duration(time.monotonic() - since))
+                return None
+            except Exception as e:  # noqa: BLE001
+                error = short_error(e)
+                if since is None:
+                    since = time.monotonic()
+                    log.warning("archive %s unreachable (%s) — waiting up to %s for it before starting",
+                                self.archive.root, error, human_duration(ARCHIVE_WAIT))
+            if time.monotonic() > deadline:
+                log.error("archive still unreachable after %s — giving up this run", human_duration(ARCHIVE_WAIT))
+                return error
+            prog.phase = f"waiting for the archive since {human_duration(time.monotonic() - since)} ({error})"
+            await asyncio.sleep(ARCHIVE_POLL)
+
+    async def _verify_archived(self, rel: str, hashes: dict[str, str], password: str, art: Artifact,
+                               sp: SourceProgress) -> int:
+        """Unzip what was just archived and compare every file with its SHA-256 from before zipping; then store
+        the `.sha256` file next to the zip. A difference deletes the zip and raises (the attempt is retried)."""
+        sp.begin("verifying (unzip + SHA-256)", art.total_size)
+        t0 = time.monotonic()
+
+        def progress(n: int) -> None:
+            sp.done_bytes = n
+
+        try:
+            n = await self.archive.verify(rel, hashes, password=password, progress=progress)
+        except IntegrityError as e:
+            log.error("integrity check of %s FAILED: %s — deleting it", rel, e)
+            await self.archive.delete(rel)
+            raise
+        await self.archive.write_checksums(rel, checksum_file(hashes))
+        log.info("verified %s: unzipped %d file(s), all identical to the originals (SHA-256) in %s", rel, n,
+                 human_duration(time.monotonic() - t0))
+        return n
 
     @staticmethod
     def _describe(src: SourceRecord) -> str:
@@ -463,10 +519,17 @@ class Engine:
             sp.begin("zipping → archive", art.total_size)
             t0 = time.monotonic()
             log.info("zipping %s (%s) straight into archive %s", file_name, human_size(art.total_size), folder)
-            pf.archive_rel, pf.size, warnings = await self._with_retries(
-                f"zip {file_name}", ctx,
-                lambda: self.archive.write_direct(folder, file_name,
-                                                  lambda f: write_zip(art, f, progress=progress, **zip_opts)))
+            hashes: dict[str, str] = {}
+
+            async def zip_and_verify() -> tuple[str, int, list[str]]:
+                hashes.clear()
+                sp.begin("zipping → archive", art.total_size)
+                result = await self.archive.write_direct(
+                    folder, file_name, lambda f: write_zip(art, f, progress=progress, hashes=hashes, **zip_opts))
+                pf.verified = await self._verify_archived(result[0], hashes, zip_opts["password"], art, sp)
+                return result
+
+            pf.archive_rel, pf.size, warnings = await self._with_retries(f"zip {file_name}", ctx, zip_and_verify)
             art.warnings.extend(warnings)
             log.info("zipped %s: %s → %s in %s (%s)", file_name, human_size(art.total_size), human_size(pf.size),
                      human_duration(time.monotonic() - t0), _speed(art.total_size, time.monotonic() - t0))
@@ -480,13 +543,21 @@ class Engine:
         t0 = time.monotonic()
         log.info("zipping %s (%d file(s), %s)%s", file_name, len(art.entries), human_size(art.total_size),
                  ", encrypted" if zip_opts["password"] else ", NOT encrypted (no zip password set)")
+        hashes: dict[str, str] = {}
         try:
-            warnings = await asyncio.to_thread(build_zip, art, out, progress=progress, **zip_opts)
+            warnings = await asyncio.to_thread(build_zip, art, out, progress=progress, hashes=hashes, **zip_opts)
         except OSError as e:
             if e.errno == 28:
                 raise SourceError(f"staging disk full while zipping {file_name}") from e
             raise
         art.warnings.extend(warnings)
+
+        def check_local() -> int:
+            with open(out, "rb") as f:
+                return verify_zip(f, hashes, password=zip_opts["password"])
+
+        sp.begin("verifying (unzip + SHA-256)", art.total_size)
+        pf.verified = await asyncio.to_thread(check_local)  # IntegrityError fails the source
         pf.size, pf.local_path = out.stat().st_size, out
         log.info("zipped %s: %s → %s in %s (%s)", file_name, human_size(art.total_size), human_size(pf.size),
                  human_duration(time.monotonic() - t0), _speed(art.total_size, time.monotonic() - t0))
@@ -496,6 +567,7 @@ class Engine:
             try:
                 pf.archive_rel = await self._with_retries(
                     f"archive {file_name}", ctx, lambda: self.archive.store_file(out, folder, file_name, progress))
+                await self.archive.write_checksums(pf.archive_rel, checksum_file(hashes))
                 log.info("archived %s in %s (%s)", pf.archive_rel, human_duration(time.monotonic() - t0),
                          _speed(pf.size, time.monotonic() - t0))
             except Exception as e:  # noqa: BLE001
@@ -658,7 +730,8 @@ class Engine:
             line = f"{STATUS_ICON[r.status]} <b>{esc(r.source_name)}</b>"
             if r.files:
                 line += " — " + ", ".join(
-                    f"{esc(f.label) + ' ' if f.label else ''}{human_size(f.size)}" for f in r.files)
+                    f"{esc(f.label) + ' ' if f.label else ''}{human_size(f.size)}"
+                    + (" ✓ verified" if f.verified else "") for f in r.files)
             if r.message:
                 line += f"\n    ↳ {esc(r.message)}"
             for w in r.warnings[:5]:

@@ -88,3 +88,30 @@ def test_short_read_fails_instead_of_making_a_truncated_zip(tmp_path):
     with pytest.raises(PackagingError, match="incomplete"):
         build_zip(art, tmp_path / "x.zip")
     assert not (tmp_path / "x.zip").exists()
+
+
+def test_hashes_are_taken_while_zipping_and_checked_after_unzipping(tmp_path):
+    import hashlib
+
+    from backuper.packager import IntegrityError, checksum_file, parse_checksums, verify_zip
+
+    data = {"a.bak": os.urandom(300_000), "sub/b.txt": b"hello " * 1000}
+    art = Artifact(label="", entries=[Entry(arcname=n, size=len(d), mtime=1.7e9, opener=lambda d=d: io.BytesIO(d))
+                                      for n, d in data.items()])
+    hashes: dict[str, str] = {}
+    build_zip(art, tmp_path / "x.zip", password="pw", hashes=hashes)
+    assert hashes == {n: hashlib.sha256(d).hexdigest() for n, d in data.items()}
+    assert parse_checksums(checksum_file(hashes)) == hashes
+
+    with open(tmp_path / "x.zip", "rb") as f:
+        assert verify_zip(f, hashes, password="pw") == 2
+    with open(tmp_path / "x.zip", "rb") as f, pytest.raises(IntegrityError, match="differs"):
+        verify_zip(f, {**hashes, "a.bak": "0" * 64}, password="pw")          # a changed file
+    with open(tmp_path / "x.zip", "rb") as f, pytest.raises(IntegrityError, match="missing"):
+        verify_zip(f, {**hashes, "c.bak": "0" * 64}, password="pw")          # a file that should be there
+    with open(tmp_path / "x.zip", "rb") as f, pytest.raises(IntegrityError):
+        verify_zip(f, hashes, password="wrong")
+    raw = bytearray((tmp_path / "x.zip").read_bytes())
+    raw[2000] ^= 0xFF                                                        # one flipped bit on disk
+    with pytest.raises(IntegrityError):
+        verify_zip(io.BytesIO(bytes(raw)), hashes, password="pw")

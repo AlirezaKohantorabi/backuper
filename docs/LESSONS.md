@@ -66,6 +66,10 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 | 18 | The service ran the old version after "restart done" | the restart happened minutes before the update was installed | the version in the startup log line | Restart button / `backuper restart` (v1.7). **Lesson:** after deploying, confirm the running version, not just that it runs. |
 | 19 | `backuper status` → *command not found*; then the CLI looked for `data/` in the current folder | the command lived only in `.venv/bin`; relative `DATA_DIR` resolved against the current folder | the owner | `~/.local/bin` link; paths relative to the `.env` file. **Lesson:** run every documented command the way the user will (from their home folder). |
 | 20 | The re-run of Hamrahan failed after 2 hours although it was 98 % done | the link to the 172.16.3.x site dropped for ~17 min; every retry restarted the 11 GB read from zero, and the library needed 10 min to notice the silence (+5 min of our credit wait on a dead connection) | the verification run's report | Reads resume at the same byte; 2-min dead-link detection; no waiting on dead connections (v1.7.1). **Lesson:** retries must be *resumable* for big transfers over slow/flaky links — design for the outage, not just the error. |
+| 21 | A power cut on the file server failed every source of both morning runs within minutes | runs assumed the archive is there; the per-write retries (30 s, 2 min) are far shorter than a reboot | the owner, from the status file | Wait up to 3 h for the archive at run start; retry failed sources 1 h later up to 3× (v1.8). **Lesson:** plan for the *destination* being down, not only the sources. |
+| 22 | Hamrahan System backups were silently missing for 3 days | the vendor moved its (now automatic) backups to a new folder; the bot saw no new file and reported ⏭ "nothing new"; the freshness limit (96 h, set when backups were irregular) hadn't been reached | reviewing the run history while investigating #21 | 30-hour limit now that the backups are daily → a missing day is an error. **Lesson:** "nothing new" from a daily source is a warning sign; keep freshness limits tight once a schedule is regular. |
+| 23 | Deleting an already-missing archive file would have crashed | `except (FileNotFoundError, SMBError)` where `SMBError` is itself a tuple — Python only rejects that *when an exception happens* | writing `backuper verify` (first real error path) | `except SMBError`. **Lesson:** error paths need tests too; an `except` clause is only evaluated when something goes wrong. |
+| 24 | A damaged AES zip wasn't recognised as an integrity failure | pyzipper raises its own `BadZipFile` class, not the standard library's | the new flipped-bit test | Catch both. **Lesson:** test the failure you are guarding against, not only the success. |
 
 ## 4. What we discovered about the environment (and how it changed the plan)
 
@@ -175,8 +179,13 @@ icacls (Get-SmbShare -Name 'Edari').Path /grant "${bot}:(OI)(CI)RX"
 - **The HS (Hamrahan System) backup folders on .250/.251 give *Everyone: Full control* (NTFS):**
   the bot reached them with its plain domain account and no setup on those servers. Worth restricting.
 
-## Open items at the time of writing (2026-10-14)
+- **2026-10-17 power cut:** the file server (archive + Edari/Finance) was off from before 07:00 until ~08:40
+  ("No route to host"); the bot server stayed up. Nothing was lost, but the day's backups failed until re-run.
+- **Hamrahan System's vendor** now makes automatic daily backups into `D:\AutoBackup\<db>` on .250/.251 and
+  didn't agree to a SQL login for us; the bot collects from there and manages the space (keep newest N).
 
-- Telegram api_id (my.telegram.org "ERROR").
-- Hamrahan System SQL logins (vendor).
+## Open items at the time of writing (2026-10-17)
+
+- Telegram: cancelled by the owner for now (api_id impossible); archive-only. Cloud copy: options suggested.
+- `D:\AutoBackup` shares on .250/.251 (owner).
 - Domain controller time source: Group Policy + Hyper-V time provider (see §4).

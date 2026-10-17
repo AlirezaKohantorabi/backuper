@@ -18,7 +18,7 @@ so the rest of the program only ever sees plaintext in memory.
 | `credentials` | Logins: name, username, encrypted secret, note. |
 | `sources` | Name, type, enabled, `config` JSON (secret fields encrypted), `state` JSON (plugin memory). |
 | `groups` | Backup groups: name, schedule, enabled, upload_at. |
-| `one_offs` | One-time scheduled runs and their status. |
+| `one_offs` | One-time scheduled runs and their status; `retry` column (added automatically to older databases) marks automatic retries. |
 | `runs` / `run_items` | History: one row per run, one row per source per run (status, message, files JSON for "Resend"). |
 | `admins` | Extra admins added in the bot (owners come from `.env`). |
 
@@ -53,7 +53,7 @@ so the rest of the program only ever sees plaintext in memory.
 | `Store.set_source_group` | Move one source into a group (or out with `""`). |
 | `Store.group_members` | Sources in a group. |
 | `Store._oneoff` | Row → `OneOff`. |
-| `Store.add_one_off` / `list_one_offs` / `get_one_off` / `set_one_off` | One-time runs: create, list by status, read, change status (and record the run id). |
+| `Store.add_one_off` / `list_one_offs` / `get_one_off` / `set_one_off` | One-time runs: create (optionally as retry no. N), list by status, read, change status (and record the run id). |
 | `Store.create_run` / `finish_run` | Start/finish a history entry (status, total size, the report text). |
 | `Store.add_run_item` / `update_run_item_files` | Per-source result of a run (files JSON is updated by "Resend"). |
 | `Store.list_runs` / `get_run` / `run_items` / `get_run_item` | History pages. |

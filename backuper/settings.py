@@ -31,6 +31,11 @@ SETTINGS_FIELDS: list[Field] = [
     Field("upload_retries", "Upload retries", INT, default=3, min=1, max=10),
     Field("concurrency", "Parallel sources", INT, default=3, min=1, max=16,
           help="How many sources are collected and zipped at the same time."),
+    Field("retry_failed_after", "Retry failed sources after (min)", INT, default=60, min=0, max=24 * 60,
+          help="A scheduled run's failed sources are tried again this many minutes later (power cut, network "
+               "outage, server reboot…). 0 = off."),
+    Field("retry_failed_times", "Retries of failed sources", INT, default=3, min=0, max=10,
+          help="How many times a failed source is retried after one scheduled run."),
     Field("notify_admins", "DM admins on failure", BOOL, default=True),
     Field("report_on_success", "Post report when all OK", BOOL, default=True),
 ]

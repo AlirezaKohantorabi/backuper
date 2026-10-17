@@ -9,6 +9,30 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.8.0] — 2026-10-17
+
+### Added
+- **Integrity check of every zip.** While a file is zipped, its SHA-256 is taken from the same bytes; right after
+  the zip is stored it is unzipped again (in memory) and every file is compared. A difference deletes the zip and
+  makes it again. The hashes are saved next to the zip as `<name>.zip.sha256`; the report shows "✓ verified".
+- `backuper verify [DATE] [ZIP…] [--all]` — re-check archived zips at any time (e.g. for disk damage).
+- `docs/windows/verify-backup.ps1` — check the files after extracting a zip by hand on Windows.
+- **Waiting for the archive:** if the archive server is off when a run starts, the run waits for it (up to 3 h)
+  instead of failing every source. On 2026-10-17 the file server lost power until ~08:40 and both morning runs
+  failed within minutes.
+- **Automatic retries of failed sources:** a scheduled or one-time run's failed sources are tried again an hour
+  later, up to 3 times (settings *Retry failed sources after (min)*, *Retries of failed sources*).
+
+### Changed
+- Hamrahan System sources (Hamrahan, Cash, Project) take the vendor's new automatic backups from
+  `D:\AutoBackup\…` (share `AutoBackup$`) and keep the newest 7 / 20 / 20 there. Their freshness limit is now
+  30 h, so a day without a new backup is an error, not a silent "nothing new".
+- The noisy "socket aborted by peer (ECONNRESET)" message (normal when Windows closes a connection) is hidden.
+
+### Fixed
+- Deleting an archive file that was already gone crashed instead of returning "already gone"
+  (an `except` clause listed a tuple inside a tuple).
+
 ## [1.7.1] — 2026-10-14
 
 ### Fixed

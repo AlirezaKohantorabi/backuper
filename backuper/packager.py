@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import os
@@ -30,6 +31,14 @@ class PackagingError(RuntimeError):
     pass
 
 
+# pyzipper ships its own copy of zipfile: its BadZipFile is a different class from the standard library's.
+_BAD_ZIP = (zipfile.BadZipFile, pyzipper.BadZipFile)
+
+
+class IntegrityError(PackagingError):
+    """A file taken out of a finished zip doesn't match what went in (SHA-256), or is missing."""
+
+
 def _zip_datetime(mtime: float) -> tuple[int, int, int, int, int, int]:
     t = time.localtime(mtime if mtime > 315532800 else time.time())  # zip can't store < 1980
     return t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec
@@ -43,6 +52,7 @@ def build_zip(
     level: int = 6,
     skip_unreadable: bool = False,
     progress: Callable[[int], None] | None = None,
+    hashes: dict[str, str] | None = None,
 ) -> list[str]:
     """Write all entries of `artifact` into a zip file at `out_path`. Returns warnings."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,7 +60,7 @@ def build_zip(
     try:
         with open(tmp, "wb") as f:
             warnings = write_zip(artifact, f, password=password, level=level,
-                                 skip_unreadable=skip_unreadable, progress=progress)
+                                 skip_unreadable=skip_unreadable, progress=progress, hashes=hashes)
         os.replace(tmp, out_path)
     except BaseException:
         tmp.unlink(missing_ok=True)
@@ -66,12 +76,15 @@ def write_zip(
     level: int = 6,
     skip_unreadable: bool = False,
     progress: Callable[[int], None] | None = None,
+    hashes: dict[str, str] | None = None,
 ) -> list[str]:
     """Write all entries of `artifact` as a zip into an open, seekable binary file
     (a local file or a file on an SMB share). Returns warnings.
 
     Entries are streamed (never fully loaded in memory), so sources can feed
-    files straight from an SMB share without a temporary copy.
+    files straight from an SMB share without a temporary copy. If `hashes` is given, it's filled with
+    {member name: SHA-256 of the original bytes}, computed from the same bytes that go into the zip
+    (no second read of the source) — `verify_zip` later compares them with what comes out.
     """
     warnings: list[str] = []
     written = 0
@@ -97,7 +110,9 @@ def write_zip(
                     continue
                 raise PackagingError(f"can't open {entry.arcname}: {e}") from e
 
-            zi = info_cls(entry.arcname.replace("\\", "/"), date_time=_zip_datetime(entry.mtime))
+            member_name = entry.arcname.replace("\\", "/")
+            zi = info_cls(member_name, date_time=_zip_datetime(entry.mtime))
+            digest = hashlib.sha256()
             stored = not entry.compress or level == 0
             first = b""
             try:
@@ -119,12 +134,14 @@ def write_zip(
                 with stream, zf.open(zi, "w", force_zip64=entry.size >= _ZIP64_THRESHOLD) as dst:
                     member = len(first)
                     if first:
+                        digest.update(first)
                         dst.write(first)
                         written += len(first)
                     while True:
                         buf = stream.read(CHUNK)
                         if not buf:
                             break
+                        digest.update(buf)
                         dst.write(buf)
                         written += len(buf)
                         member += len(buf)
@@ -134,10 +151,62 @@ def write_zip(
             except OSError as e:
                 # A half-written member corrupts the zip: never skip, fail the artifact.
                 raise PackagingError(f"read error in {entry.arcname}: {e}") from e
+            if hashes is not None:
+                hashes[member_name] = digest.hexdigest()
             added += 1
     if added == 0 and artifact.entries:
         raise PackagingError("no readable files - nothing was zipped")
     return warnings
+
+
+def verify_zip(fileobj: BinaryIO, expected: dict[str, str], *, password: str = "",
+               progress: Callable[[int], None] | None = None) -> int:
+    """Unzip every member of a finished zip (in memory, streamed) and compare its SHA-256 with the hash
+    taken while zipping. Raises IntegrityError on a missing, extra or different file (the zip library's own
+    CRC / AES checks raise too). Returns the number of files checked."""
+    try:
+        zf = pyzipper.AESZipFile(fileobj)
+    except (*_BAD_ZIP, OSError, ValueError) as e:
+        raise IntegrityError(f"not a readable zip: {e}") from e
+    with zf:
+        if password:
+            zf.setpassword(password.encode())
+        members = [i for i in zf.infolist() if not i.is_dir()]
+        names = {i.filename for i in members}
+        missing, extra = sorted(set(expected) - names), sorted(names - set(expected))
+        if missing or extra:
+            raise IntegrityError(f"zip content differs: missing {missing[:5]}, unexpected {extra[:5]}")
+        done = 0
+        for info in members:
+            digest = hashlib.sha256()
+            try:
+                with zf.open(info) as m:
+                    while buf := m.read(CHUNK):
+                        digest.update(buf)
+                        done += len(buf)
+                        if progress:
+                            progress(done)
+            except (*_BAD_ZIP, RuntimeError, ValueError) as e:  # CRC / AES authentication / password
+                raise IntegrityError(f"{info.filename}: can't be unzipped correctly: {e}") from e
+            if digest.hexdigest() != expected[info.filename]:
+                raise IntegrityError(f"{info.filename}: SHA-256 after unzipping differs from the original")
+    return len(members)
+
+
+def checksum_file(hashes: dict[str, str]) -> str:
+    """The `.sha256` file stored next to each zip: one `<sha256> *<path>` line per file (the format of
+    `sha256sum -c`; `verify-backup.ps1` checks extracted files against it on Windows)."""
+    return "".join(f"{h} *{name}\n" for name, h in sorted(hashes.items()))
+
+
+def parse_checksums(text: str) -> dict[str, str]:
+    """Read a `.sha256` file back into {path: sha256}."""
+    out = {}
+    for line in text.lstrip("\ufeff").splitlines():
+        h, sep, name = line.partition(" *")
+        if sep and len(h) == 64:
+            out[name] = h.lower()
+    return out
 
 
 def part_ranges(size: int, part_size: int) -> list[tuple[int, int]]:
