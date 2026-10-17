@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import os
 from pathlib import Path
@@ -101,16 +100,12 @@ async def test_full_run(cfg, store, tmp_path):
     assert sender.uploads[-1][0].startswith("Big_db0_")
 
     today = jalali.folder_name(jalali.now_jalali(cfg.timezone))
-    names = sorted(p.name for p in (archive / today).iterdir())
-    zips = [n for n in names if n.endswith(".zip")]
-    assert len(zips) == 3 and names == sorted(zips + [z + ".sha256" for z in zips])  # each zip + its checksums
+    zips = sorted(p.name for p in (archive / today).iterdir())
+    assert len(zips) == 3 and all(z.endswith(".zip") for z in zips)   # no checksum files are kept
     with pyzipper.AESZipFile(archive / today / zips[0]) as z:
         z.setpassword(b"pw")
         assert z.testzip() is None
-        member = z.namelist()[0]
-        digest = hashlib.sha256(z.read(member)).hexdigest()
-    assert (archive / today / (zips[0] + ".sha256")).read_text() == f"{digest} *{member}\n"
-    assert all(i["status"] != OK or "verified" in i["files"] for i in store.run_items(run_id))
+    assert all(i["status"] != OK or '"verified": 1' in i["files"] for i in store.run_items(run_id))
 
     # archive retention: newest 3 date folders survive, non-date folders untouched
     remaining = sorted(p.name for p in archive.iterdir())
@@ -514,8 +509,7 @@ async def test_archived_zip_is_unzipped_and_compared(cfg, store, tmp_path):
     run_id = await Engine(cfg, store, None).run(trigger="t")
     item = store.run_items(run_id)[0]
     assert item["status"] == OK and '"verified": 1' in item["files"]
-    zips = list(arch.rglob("DB_*.zip"))
-    assert len(zips) == 1 and zips[0].with_name(zips[0].name + ".sha256").read_text().endswith(" *db0.bak\n")
+    assert [p.name for p in arch.rglob("*") if p.is_file()] == [next(arch.rglob("DB_*.zip")).name]  # just the zip
 
 
 async def test_zip_that_fails_the_check_is_deleted_and_made_again(cfg, store, tmp_path, monkeypatch):
@@ -538,7 +532,7 @@ async def test_zip_that_fails_the_check_is_deleted_and_made_again(cfg, store, tm
     monkeypatch.setattr(engine.archive, "verify", flaky_verify)
     run_id = await engine.run(trigger="t")
     assert len(calls) == 2 and store.run_items(run_id)[0]["status"] == OK
-    assert len(list(arch.rglob("DB_*.zip"))) == 1 and len(list(arch.rglob("DB_*.zip.sha256"))) == 1
+    assert len(list(arch.rglob("DB_*.zip"))) == 1
 
 
 async def test_run_waits_for_an_unreachable_archive(cfg, store, tmp_path, monkeypatch):
@@ -579,14 +573,12 @@ async def test_archive_that_stays_down_fails_the_run_without_backing_up(cfg, sto
     assert not engine._active  # nothing left marked as running
 
 
-async def test_deleting_a_zip_also_deletes_its_checksums(cfg, store, tmp_path):
+async def test_deleting_a_zip_that_is_already_gone(cfg, store, tmp_path):
     arch = tmp_path / "arch"
     store.set_setting("archive_path", str(arch))
     (arch / "1405-07-25").mkdir(parents=True)
     (arch / "1405-07-25" / "A.zip").write_bytes(b"z")
-    (arch / "1405-07-25" / "A.zip.sha256").write_text("x")
     assert await Engine(cfg, store, None).archive.delete("1405-07-25/A.zip")
-    assert not list((arch / "1405-07-25").iterdir())
     assert not await Engine(cfg, store, None).archive.delete("1405-07-25/A.zip")  # already gone: False, no crash
 
 

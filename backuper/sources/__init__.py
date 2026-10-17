@@ -7,12 +7,13 @@ from backuper.sources.mikrotik import MikroTik
 from backuper.sources.mssql_collect import MSSQLCollect
 from backuper.sources.mssql_trigger import MSSQLTrigger
 from backuper.sources.remote_folder import RemoteFolder
+from backuper.sources.self_backup import SelfBackup
 from backuper.sources.smb_folder import SMBFolder
 
 # Order here = order in the bot's "Add source" menu.
 REGISTRY: dict[str, type[SourceType]] = {
     cls.type_id: cls
-    for cls in (MSSQLCollect, MSSQLTrigger, MikroTik, SMBFolder, RemoteFolder, CPanel, DirectAdmin)
+    for cls in (MSSQLCollect, MSSQLTrigger, MikroTik, SMBFolder, RemoteFolder, CPanel, DirectAdmin, SelfBackup)
 }
 
 

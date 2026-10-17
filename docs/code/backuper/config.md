@@ -27,6 +27,7 @@ database instead and is edited from the bot (see [settings.py](settings.md)).
 |---|---|
 | `ConfigError` | Configuration problem with a readable message; `cli.main` prints it and exits with code 2. |
 | `AppConfig` | Frozen dataclass with the values above, already parsed (int API_ID, `ZoneInfo`, resolved paths). |
+| `AppConfig.env_file` | The `.env` the configuration came from (the [self backup](sources/self_backup.md) includes it). Relative `DATA_DIR`/`STAGING_DIR` are relative to its folder. |
 | `AppConfig.db_path` | `DATA_DIR/backuper.db`. |
 | `AppConfig.session_path` | `DATA_DIR/telegram` (Telethon adds `.session`). |
 | `AppConfig.log_dir` | `DATA_DIR/logs`. |

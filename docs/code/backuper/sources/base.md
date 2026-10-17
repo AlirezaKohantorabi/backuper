@@ -25,7 +25,7 @@ engine does everything else: zipping, encryption, archive, Telegram, retention s
 | `SourceError` | Expected, explainable failure — shown to the user without a traceback. |
 | `COMMON_FIELDS` | See table above. |
 | `RunContext` | What a plugin gets during a run. |
-| `RunContext.__init__` | Store, the source record, a private work folder in staging, the run's Jalali time, a logger. |
+| `RunContext.__init__` | Store, the source record, a private work folder in staging, the run's Jalali time, a logger, and `app` — the service's configuration (used by the [self backup](self_backup.md)). |
 | `RunContext.stamp` | `1405-07-21_0800` — for file names made during this run. |
 | `RunContext.credential` | Look up a credential by name (clear error if it was deleted). |
 | `RunContext.smb` | An SMB client for a credential name. |

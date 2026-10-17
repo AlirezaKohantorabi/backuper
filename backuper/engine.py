@@ -20,10 +20,10 @@ import logging
 import shutil
 import time
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TypeVar
 
 import jdatetime
 
@@ -35,7 +35,7 @@ from backuper.destinations.telegram import TelegramSender, esc
 from backuper.models import (
     FAILED, OK, PARTIAL, SKIPPED, STATUS_ICON, WARNING, Artifact, ItemResult, PackagedFile, SourceRecord,
 )
-from backuper.packager import IntegrityError, build_zip, checksum_file, verify_zip, write_zip
+from backuper.packager import IntegrityError, build_zip, verify_zip, write_zip
 from backuper.settings import FOLDER_FORMATS
 from backuper.sources import RunContext, SourceError, SourceType, get_type
 from backuper.util import hashtag, human_duration, human_size, safe_filename, short_error
@@ -373,8 +373,9 @@ class Engine:
 
     async def _verify_archived(self, rel: str, hashes: dict[str, str], password: str, art: Artifact,
                                sp: SourceProgress) -> int:
-        """Unzip what was just archived and compare every file with its SHA-256 from before zipping; then store
-        the `.sha256` file next to the zip. A difference deletes the zip and raises (the attempt is retried)."""
+        """Unzip what was just archived and compare every file with its SHA-256 from before zipping (the hashes
+        live only in memory — nothing is stored once the check passed). A difference deletes the zip and raises
+        (the attempt is retried)."""
         sp.begin("verifying (unzip + SHA-256)", art.total_size)
         t0 = time.monotonic()
 
@@ -387,7 +388,6 @@ class Engine:
             log.error("integrity check of %s FAILED: %s — deleting it", rel, e)
             await self.archive.delete(rel)
             raise
-        await self.archive.write_checksums(rel, checksum_file(hashes))
         log.info("verified %s: unzipped %d file(s), all identical to the originals (SHA-256) in %s", rel, n,
                  human_duration(time.monotonic() - t0))
         return n
@@ -433,7 +433,7 @@ class Engine:
         async with sem:
             res.started = time.time()
             log.info("collecting (%s)", src.type)
-            ctx = RunContext(self.store, src, run_dir / f"src-{src.id}", now)
+            ctx = RunContext(self.store, src, run_dir / f"src-{src.id}", now, app=self.cfg)
             try:
                 cls = get_type(src.type)
                 plugin = cls(src, ctx)
@@ -601,7 +601,6 @@ class Engine:
             try:
                 pf.archive_rel = await self._with_retries(
                     f"archive {file_name}", ctx, lambda: self.archive.store_file(out, folder, file_name, progress))
-                await self.archive.write_checksums(pf.archive_rel, checksum_file(hashes))
                 log.info("archived %s in %s (%s)", pf.archive_rel, human_duration(time.monotonic() - t0),
                          _speed(pf.size, time.monotonic() - t0))
             except Exception as e:  # noqa: BLE001
@@ -653,7 +652,7 @@ class Engine:
             pf.upload_error = short_error(e)
 
     def _caption(self, pf: PackagedFile, now: jdatetime.datetime, part: int, parts: int) -> str:
-        icon = {"databases": "🗄", "network": "🌐", "websites": "🌍", "files": "📁"}.get(pf.category, "📦")
+        icon = {"databases": "🗄", "network": "🌐", "websites": "🌍", "files": "📁", "system": "⚙️"}.get(pf.category, "📦")
         title = f"{icon} <b>{esc(pf.source_name)}</b>" + (f" · {esc(pf.label)}" if pf.label else "")
         size = human_size(pf.size)
         if pf.raw_size and pf.raw_size > pf.size * 1.1:

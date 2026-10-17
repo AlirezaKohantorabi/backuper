@@ -14,7 +14,7 @@ turns them into `PackagedFile`s and `ItemResult`s, [telegram](destinations/teleg
 |---|---|
 | `OK`, `WARNING`, `PARTIAL`, `FAILED`, `SKIPPED` | Status of one source in one run. PARTIAL = stored somewhere but not everywhere (e.g. archive OK, Telegram failed). SKIPPED = nothing new / already running. |
 | `STATUS_ICON` | Emoji per status for reports and menus (✅ ⚠️ 🟠 ❌ ⏭). |
-| `CATEGORY_TITLES` | Default Telegram topic name per source category (databases, network, websites, files, reports). |
+| `CATEGORY_TITLES` | Default topic name per source category (databases, network, websites, files, system, reports). |
 | `_STORED_EXT` | File extensions that are already compressed; zipped with STORE instead of DEFLATE. |
 
 ## Classes and functions

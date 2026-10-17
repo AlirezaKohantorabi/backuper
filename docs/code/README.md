@@ -78,6 +78,7 @@ files in the order below.
 | [backuper/sources/mssql_trigger.py](backuper/sources/mssql_trigger.md) | run `BACKUP DATABASE`, then collect |
 | [backuper/sources/mssql_common.py](backuper/sources/mssql_common.md) | grouping/freshness/retention shared by both SQL types |
 | [backuper/sources/mikrotik.py](backuper/sources/mikrotik.md) | RouterOS export + binary backup over SSH/SFTP |
+| [backuper/sources/self_backup.py](backuper/sources/self_backup.md) | the bot's own database, `.env` and company configuration |
 | [backuper/sources/smb_folder.py](backuper/sources/smb_folder.md) | Windows folder → zip or plain copy |
 | [backuper/sources/remote_folder.py](backuper/sources/remote_folder.md) | folder over SFTP/FTP/FTPS |
 | [backuper/sources/hosting_common.py](backuper/sources/hosting_common.md) | download/delete leg for hosting panels |

@@ -154,7 +154,7 @@ def cmd_test(args) -> int:
             rc = 1
             continue
         workdir = cfg.staging_dir / f"test-{src.id}"
-        ctx = RunContext(store, src, workdir, jalali.now_jalali(cfg.timezone))
+        ctx = RunContext(store, src, workdir, jalali.now_jalali(cfg.timezone), app=cfg)
         try:
             result = asyncio.run(asyncio.wait_for(get_type(src.type)(src, ctx).test(), 180))
             print(f"✓ {name}: {result}")
@@ -376,10 +376,55 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_once(args) -> int:
+    """Schedule, list or cancel one-time runs (picked up by the running service within 30 s)."""
+    cfg = load_config(args.env, require_telegram=False)
+    store = open_store(cfg)
+    tz = cfg.timezone
+    if args.cancel:
+        o = store.get_one_off(args.cancel)
+        if o is None or o.status != "pending":
+            print(f"No pending one-time run #{args.cancel}.", file=sys.stderr)
+            return 1
+        store.set_one_off(o.id, "cancelled")
+        print(f"Cancelled #{o.id}: {o.label}")
+        return 0
+    if args.list or not args.when:
+        pending = store.list_one_offs()
+        for o in pending:
+            print(f"#{o.id}  {jalali.pretty(jalali.to_jalali(o.run_at.astimezone(tz)))}  {o.label}")
+        print(f"{len(pending)} pending one-time run(s).")
+        return 0
+    if not args.names:
+        print("Name the sources or groups to run, e.g.: backuper once 22:00 Hamrahan-Manual", file=sys.stderr)
+        return 2
+    try:
+        when = jalali.parse_when(args.when, tz)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 2
+    groups = {g.name.lower(): g for g in store.list_groups()}
+    ids: list[int] = []
+    for name in args.names:
+        src = store.get_source_by_name(name)
+        if src is not None:
+            ids.append(src.id)
+        elif name.lower() in groups:
+            ids += [s.id for s in store.list_sources(enabled_only=True)
+                    if (s.config.get("group") or "").lower() == name.lower()]
+        else:
+            print(f"No source or group named {name!r} (see: backuper list).", file=sys.stderr)
+            return 2
+    ids = list(dict.fromkeys(ids))
+    oid = store.add_one_off(", ".join(args.names), ids, when, None)
+    print(f"⏱ #{oid} at {jalali.pretty(jalali.to_jalali(when))}: {', '.join(args.names)} ({len(ids)} source(s)). "
+          "The service picks it up within 30 seconds; cancel with: backuper once --cancel " + str(oid))
+    return 0
+
+
 def cmd_verify(args) -> int:
-    """Unzip archived zips again and compare every file with the SHA-256 stored next to the zip."""
+    """Unzip archived zips again (in memory) and check them with the zip's own AES authentication / CRC."""
     from backuper.destinations.archive import Archive
-    from backuper.packager import parse_checksums
     from backuper.util import human_duration, short_error
 
     cfg = load_config(args.env, require_telegram=False)
@@ -390,32 +435,20 @@ def cmd_verify(args) -> int:
 
     async def main() -> int:
         folders = await archive.list_date_folders()
-        if args.all:
-            todo = folders
-        elif args.folder:
-            todo = [args.folder]
-        else:
-            todo = folders[-1:]
-        checked = bad = skipped = 0
+        todo = folders if args.all else [args.folder] if args.folder else folders[-1:]
+        ok = bad = 0
         for folder in todo:
-            names = args.name or await archive.list_zips(folder)
             print(f"{folder}:")
-            for name in names:
-                rel = f"{folder}/{name}"
-                text = await archive.read_checksums(rel)
-                if text is None:
-                    skipped += 1
-                    print(f"   ·  {name}: no {name}.sha256 (made before 1.8) — skipped")
-                    continue
+            for name in args.name or await archive.list_zips(folder):
                 t0 = time.time()
                 try:
-                    n = await archive.verify(rel, parse_checksums(text), password=password)
-                    checked += 1
-                    print(f"   ✓  {name}: {n} file(s) identical to the originals ({human_duration(time.time() - t0)})")
+                    n = await archive.verify(f"{folder}/{name}", None, password=password)
+                    ok += 1
+                    print(f"   ✓  {name}: {n} file(s) unzip correctly ({human_duration(time.time() - t0)})")
                 except Exception as e:  # noqa: BLE001
                     bad += 1
                     print(f"   ✗  {name}: {short_error(e)}")
-        print(f"{checked} zip(s) OK, {bad} damaged, {skipped} without checksums.")
+        print(f"{ok} zip(s) OK, {bad} damaged.")
         return 1 if bad else 0
 
     return asyncio.run(main())
@@ -494,8 +527,12 @@ def main(argv: list[str] | None = None) -> None:
     st.add_argument("value", nargs="?")
     e = sub.add_parser("export", help="export configuration to YAML (without passwords)")
     e.add_argument("file", nargs="?")
-    vf = sub.add_parser("verify", help="unzip archived zips and compare every file with its SHA-256 "
-                                       "(default: newest date folder)")
+    on = sub.add_parser("once", help="run sources/groups once at a given time (or --list / --cancel ID)")
+    on.add_argument("when", nargs="?", help="14:30 · '1405/07/25 22:00' · '2026-10-17 22:00' · +30m · +2h")
+    on.add_argument("names", nargs="*", help="source or group names")
+    on.add_argument("--list", action="store_true", help="show pending one-time runs")
+    on.add_argument("--cancel", type=int, metavar="ID", help="cancel a pending one-time run")
+    vf = sub.add_parser("verify", help="unzip archived zips again and check them (default: newest date folder)")
     vf.add_argument("folder", nargs="?", help="date folder, e.g. 1405-07-25")
     vf.add_argument("name", nargs="*", help="only these zips")
     vf.add_argument("--all", action="store_true", help="every date folder in the archive")
@@ -507,7 +544,7 @@ def main(argv: list[str] | None = None) -> None:
     handlers = {"serve": cmd_serve, "gen-key": cmd_gen_key, "run": cmd_run, "test": cmd_test, "check": cmd_check,
                 "list": cmd_list, "import": cmd_import, "export": cmd_export, "credential": cmd_credential,
                 "set": cmd_set, "log": cmd_log, "status": cmd_status, "restart": cmd_restart, "verify": cmd_verify,
-                None: cmd_serve}
+                "once": cmd_once, None: cmd_serve}
     try:
         sys.exit(handlers[args.cmd](args))
     except ConfigError as e:

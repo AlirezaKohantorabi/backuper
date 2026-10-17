@@ -93,7 +93,7 @@ def test_short_read_fails_instead_of_making_a_truncated_zip(tmp_path):
 def test_hashes_are_taken_while_zipping_and_checked_after_unzipping(tmp_path):
     import hashlib
 
-    from backuper.packager import IntegrityError, checksum_file, parse_checksums, verify_zip
+    from backuper.packager import IntegrityError, verify_zip
 
     data = {"a.bak": os.urandom(300_000), "sub/b.txt": b"hello " * 1000}
     art = Artifact(label="", entries=[Entry(arcname=n, size=len(d), mtime=1.7e9, opener=lambda d=d: io.BytesIO(d))
@@ -101,7 +101,6 @@ def test_hashes_are_taken_while_zipping_and_checked_after_unzipping(tmp_path):
     hashes: dict[str, str] = {}
     build_zip(art, tmp_path / "x.zip", password="pw", hashes=hashes)
     assert hashes == {n: hashlib.sha256(d).hexdigest() for n, d in data.items()}
-    assert parse_checksums(checksum_file(hashes)) == hashes
 
     with open(tmp_path / "x.zip", "rb") as f:
         assert verify_zip(f, hashes, password="pw") == 2
@@ -115,3 +114,7 @@ def test_hashes_are_taken_while_zipping_and_checked_after_unzipping(tmp_path):
     raw[2000] ^= 0xFF                                                        # one flipped bit on disk
     with pytest.raises(IntegrityError):
         verify_zip(io.BytesIO(bytes(raw)), hashes, password="pw")
+    # later checks without the hashes (`backuper verify`): the zip's own AES authentication still catches it
+    assert verify_zip(io.BytesIO((tmp_path / "x.zip").read_bytes()), None, password="pw") == 2
+    with pytest.raises(IntegrityError):
+        verify_zip(io.BytesIO(bytes(raw)), None, password="pw")

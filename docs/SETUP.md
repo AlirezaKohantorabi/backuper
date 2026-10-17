@@ -141,9 +141,10 @@ sudo systemctl disable --now backuper && sudo rm /etc/systemd/system/backuper.se
 
 - **Zip:** 7-Zip or WinRAR + the zip password. Split uploads: put all `.zip.001`, `.zip.002`… in one folder
   and open `.001`.
-- **Check what you extracted:** every zip has `<name>.zip.sha256` next to it (SHA-256 of each file *before*
-  zipping). On Windows: `.\docs\windows\verify-backup.ps1 <name>.zip.sha256 [<extracted folder>]` →
-  "All N file(s) are identical". On the server, without extracting anything: `backuper verify [DATE] [ZIP…]`.
+- **Is a zip intact?** Every zip was unzipped and compared file by file (SHA-256) right after it was made. Later:
+  7-Zip → *Test archive*, or on the server `backuper verify [DATE] [ZIP…]` (the zip's own AES/CRC checks).
+- **The bot server itself:** the daily `Backuper_<date>.zip` holds `.env`, `data/backuper.db` and `local/`;
+  follow its `RESTORE.txt` (clone, `./install.sh`, copy the three back, restart). Needs the zip password.
 - **SQL:** SSMS → Restore Database (or `RESTORE DATABASE … FROM DISK = '…bak' WITH MOVE …`).
 - **MikroTik:** `.backup` → upload to *Files*, `/system backup load` (same model only); `.rsc` →
   `/import file-name=…` (portable — review it first; it contains passwords).

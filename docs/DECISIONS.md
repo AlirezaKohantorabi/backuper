@@ -138,14 +138,27 @@ recommendation accepted by the owner.
 - **Owner's request:** hash the files before zipping and compare after unzipping.
 - **How:** the "before" hash is taken from the same bytes that are zipped (a second read of an 11 GB file over
   the slow site link would cost another 35 minutes and could read a file that changed meanwhile). The check reads
-  the zip back from the archive — so it also proves what's on the archive disk — and stores `<zip>.sha256` for
-  later checks and manual restores. Cost: one extra LAN read per zip (~10 GB/day, a few minutes).
-- **Not yet for plain folder copies** (Edari/Finance): that would mean reading 190 GB twice per day; offered to
-  the owner as an option.
+  the zip back from the archive — so it also proves what's on the archive disk. Cost: one extra LAN read per zip
+  (~10 GB/day, a few minutes). 1.8 also kept `<zip>.sha256` next to each zip; the owner wanted them gone once
+  the check passes (1.9) — later checks rely on the zip's own AES authentication / CRC (7-Zip *Test*,
+  `backuper verify`).
+- **Not for plain folder copies** (Edari/Finance) — owner: not needed.
 
 ### D25 — Wait for the archive, then retry failed sources later (2026-10-17, E)
 - **Why:** a power cut on the file server failed every source of both morning runs within minutes, and nothing
   tried again. Waiting (up to 3 h, checking every minute) covers reboots and short outages without making
   backups on the servers that can't be stored; automatic retries (1 h later, up to 3×) cover everything else
   that fails for a while (site link outages). Both are cheap and visible in the status file.
+
+### D26 — The bot backs itself up (2026-10-17, O)
+- **Why:** without its database, `.env` (the key to the stored passwords) and the git-ignored company config,
+  rebuilding the bot server means re-entering every source and password. A daily zip in the archive, with
+  restore steps inside. Only risk: the zip password is needed to open it and is stored inside it — the owner
+  keeps a copy elsewhere.
+
+### D27 — Manual-only bot backups of vendor databases, next to the vendor's (2026-10-17, O)
+- **Why:** the owner created a SQL login on the Hamrahan System servers "in case we need a manual/one-time
+  backup with the bot". Three sources without group or time (`…-Manual`), `COPY_ONLY` (the vendor's backup chain
+  is untouched), written into the vendor's AutoBackup folders under our own name pattern, which the daily
+  collect sources' patterns (`<db>_backup_*.bak`) don't match. `backuper once` replaces the bot's ⏱ menu.
 

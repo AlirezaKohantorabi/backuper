@@ -184,6 +184,9 @@ icacls (Get-SmbShare -Name 'Edari').Path /grant "${bot}:(OI)(CI)RX"
   ("No route to host"); the bot server stayed up. Nothing was lost, but the day's backups failed until re-run.
 - **Hamrahan System's vendor** now makes automatic daily backups into `D:\AutoBackup\<db>` on .250/.251 and
   didn't agree to a SQL login for us; the bot collects from there and manages the space (keep newest N).
+  The vendor's job writes `<db>_backup_YYYY_MM_DD_HHMMSS_N.bak` (SQL maintenance plan); its schedule isn't
+  visible to our login. The owner then created a SQL login anyway (for manual backups): SQL Server 2019 Enterprise
+  on both, `db_backupoperator` on all databases. .251 also has a database **Ramezani** that nothing backs up.
 
 ## Open items at the time of writing (2026-10-17)
 

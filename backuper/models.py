@@ -17,6 +17,7 @@ CATEGORY_TITLES = {
     "network": "🌐 Network",
     "websites": "🌍 Websites",
     "files": "📁 File Servers",
+    "system": "⚙️ System",
     "reports": "📊 Reports",
 }
 

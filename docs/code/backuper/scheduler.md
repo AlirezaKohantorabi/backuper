@@ -33,6 +33,7 @@ bot server's clock in the configured timezone (so servers with a wrong clock don
 | `Scheduler._fire` | A cron job fired: run its sources (with the group's upload time). |
 | `Scheduler._fire_once` | A one-time job fired: mark running, run, mark done (or failed) with the run id. |
 | `Scheduler._add_once_job` | Adds the job for one one-time run. |
+| `ONE_OFF_SYNC` / `Scheduler._sync_one_offs` | Every 30 s: schedule one-time runs added with `backuper once` (written to the database by another process), drop cancelled ones, mark ones more than an hour late as missed. |
 | `Scheduler.retry_failed` | After a scheduled or one-time run: its **failed** sources become a new one-time run `retry_failed_after` minutes later (default 60), at most `retry_failed_times` times (default 3) — for power cuts, link outages, reboots. Listed under "Next" in the status file. |
 | `Scheduler.next_runs` | `[(time, label, number of sources)]` soonest first — shown on the main menu and the ⏰ Schedule page. |
 | `Scheduler.describe` | The same as text (logged at startup). |

@@ -79,7 +79,8 @@ backuper credential NAME   # store a login, password typed hidden
 backuper set KEY [VALUE]   # change a setting (secrets typed hidden)
 backuper status            # what's running now, problems in the last runs, next runs
 backuper log [RUN]         # a run's detailed log
-backuper verify [DATE]     # unzip archived zips again and compare every file's SHA-256
+backuper verify [DATE]     # unzip archived zips again and check them
+backuper once WHEN NAME... # one-time run of sources/groups (--list, --cancel ID)
 backuper restart [--now]   # restart the service (waits for running backups) — no sudo
 backuper list | import FILE | export [FILE] | gen-key
 ```

@@ -159,11 +159,12 @@ def write_zip(
     return warnings
 
 
-def verify_zip(fileobj: BinaryIO, expected: dict[str, str], *, password: str = "",
+def verify_zip(fileobj: BinaryIO, expected: dict[str, str] | None, *, password: str = "",
                progress: Callable[[int], None] | None = None) -> int:
-    """Unzip every member of a finished zip (in memory, streamed) and compare its SHA-256 with the hash
-    taken while zipping. Raises IntegrityError on a missing, extra or different file (the zip library's own
-    CRC / AES checks raise too). Returns the number of files checked."""
+    """Unzip every member of a zip (in memory, streamed, nothing written) and compare its SHA-256 with the
+    hash taken while zipping. Raises IntegrityError on a missing, extra or different file; the zip's own checks
+    (AES authentication code / CRC-32) raise too. With `expected=None` only those built-in checks are made — used
+    to re-check old zips later (`backuper verify`). Returns the number of files checked."""
     try:
         zf = pyzipper.AESZipFile(fileobj)
     except (*_BAD_ZIP, OSError, ValueError) as e:
@@ -173,9 +174,10 @@ def verify_zip(fileobj: BinaryIO, expected: dict[str, str], *, password: str = "
             zf.setpassword(password.encode())
         members = [i for i in zf.infolist() if not i.is_dir()]
         names = {i.filename for i in members}
-        missing, extra = sorted(set(expected) - names), sorted(names - set(expected))
-        if missing or extra:
-            raise IntegrityError(f"zip content differs: missing {missing[:5]}, unexpected {extra[:5]}")
+        if expected is not None:
+            missing, extra = sorted(set(expected) - names), sorted(names - set(expected))
+            if missing or extra:
+                raise IntegrityError(f"zip content differs: missing {missing[:5]}, unexpected {extra[:5]}")
         done = 0
         for info in members:
             digest = hashlib.sha256()
@@ -188,25 +190,9 @@ def verify_zip(fileobj: BinaryIO, expected: dict[str, str], *, password: str = "
                             progress(done)
             except (*_BAD_ZIP, RuntimeError, ValueError) as e:  # CRC / AES authentication / password
                 raise IntegrityError(f"{info.filename}: can't be unzipped correctly: {e}") from e
-            if digest.hexdigest() != expected[info.filename]:
+            if expected is not None and digest.hexdigest() != expected[info.filename]:
                 raise IntegrityError(f"{info.filename}: SHA-256 after unzipping differs from the original")
     return len(members)
-
-
-def checksum_file(hashes: dict[str, str]) -> str:
-    """The `.sha256` file stored next to each zip: one `<sha256> *<path>` line per file (the format of
-    `sha256sum -c`; `verify-backup.ps1` checks extracted files against it on Windows)."""
-    return "".join(f"{h} *{name}\n" for name, h in sorted(hashes.items()))
-
-
-def parse_checksums(text: str) -> dict[str, str]:
-    """Read a `.sha256` file back into {path: sha256}."""
-    out = {}
-    for line in text.lstrip("\ufeff").splitlines():
-        h, sep, name = line.partition(" *")
-        if sep and len(h) == 64:
-            out[name] = h.lower()
-    return out
 
 
 def part_ranges(size: int, part_size: int) -> list[tuple[int, int]]:

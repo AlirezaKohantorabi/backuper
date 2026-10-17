@@ -23,6 +23,7 @@ from backuper.models import Artifact, Credential, SourceRecord
 from backuper.transport.smb import SMB
 
 if TYPE_CHECKING:
+    from backuper.config import AppConfig
     from backuper.db import Store
 
 
@@ -52,8 +53,9 @@ COMMON_FIELDS: list[Field] = [
 
 class RunContext:
     def __init__(self, store: Store, source: SourceRecord, workdir: Path, now: jdatetime.datetime,
-                 log: logging.Logger | None = None):
+                 log: logging.Logger | None = None, app: AppConfig | None = None):
         self.store = store
+        self.app = app  # the service's own configuration (paths of its database and .env)
         self.source = source
         self.workdir = workdir
         self.now = now
@@ -111,7 +113,7 @@ class RunContext:
 class SourceType(ABC):
     type_id: ClassVar[str]
     title: ClassVar[str]
-    category: ClassVar[str]           # databases | network | websites | files
+    category: ClassVar[str]           # databases | network | websites | files | system
     description: ClassVar[str] = ""
     fields: ClassVar[list[Field]] = []
 

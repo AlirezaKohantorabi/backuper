@@ -138,3 +138,9 @@ after* turns it into a "move" (e.g. for servers that drop their own dumps somewh
 - **Login**: user + password or a **Login Key** that allows `CMD_API_SITE_BACKUP` and
   `CMD_API_SHOW_DOMAINS`. *Download login*: the main FTP account (home = `/home/<user>`).
 - *Domain*: any domain of the account (required by the API).
+
+## This Backuper server (`self`)
+
+The bot's own database (consistent copy taken while it runs), its `.env` and everything in `local/` (the
+company configuration), plus a `RESTORE.txt`. Nothing to set up; add it to a daily group. Keep a copy of the
+**zip password** outside this server — it's needed to open this backup and is stored inside it.

@@ -25,6 +25,7 @@ from backuper.models import FAILED
 
 log = logging.getLogger(__name__)
 ONE_OFF_GRACE = timedelta(hours=1)  # a one-time run missed while the service was down still runs within this
+ONE_OFF_SYNC = 30                   # seconds: how soon one-time runs added/cancelled with `backuper once` are seen
 
 
 @dataclass
@@ -94,7 +95,27 @@ class Scheduler:
                 log.warning("One-time run %r at %s was missed (service was down)", o.label, o.run_at)
                 continue
             self._add_once_job(o.id, max(o.run_at, now + timedelta(seconds=5)))
+        self._sched.add_job(self._sync_one_offs, "interval", seconds=ONE_OFF_SYNC, id="sync-one-offs",
+                            replace_existing=True)
         log.info("Schedule loaded:\n%s", self.describe() or "nothing scheduled")
+
+    async def _sync_one_offs(self) -> None:
+        """Pick up one-time runs added or cancelled from the command line (`backuper once`), which writes
+        them into the database while the service is running."""
+        now = datetime.now(self.tz)
+        pending = {o.id: o for o in self.store.list_one_offs()}
+        scheduled = {int(j.id.split(":", 1)[1]) for j in self._sched.get_jobs() if j.id.startswith("once:")}
+        for oid, o in pending.items():
+            if oid in scheduled:
+                continue
+            if o.run_at < now - ONE_OFF_GRACE:
+                self.store.set_one_off(oid, "missed")
+                continue
+            self._add_once_job(oid, max(o.run_at, now + timedelta(seconds=5)))
+            log.info("one-time run #%d added: %s at %s", oid, o.label, f"{o.run_at:%Y-%m-%d %H:%M}")
+        for oid in scheduled - set(pending):
+            self._sched.remove_job(f"once:{oid}")
+            log.info("one-time run #%d cancelled", oid)
 
     async def _fire(self, key: str) -> None:
         job = self.plan().get(key)  # re-read: membership may have changed since loading

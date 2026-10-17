@@ -36,8 +36,7 @@ and credential from ⚙️ Settings every time, so changes apply without a resta
 | `Archive._discard` | After a failure: removes the unfinished `.uploading` file / `.partial` folder over a *fresh* connection (the failed one may be dead); 3 tries, never raises. |
 | `_is_unreadable` | Is an error about the *source file* (access denied, locked, vanished, changed while read)? Only those are skipped in folder copies; connection/archive errors fail the copy so it's retried. |
 | `COPY_WORKERS` / `Archive._copy_files_parallel` | Folder copies use 4 worker threads, each with its own connection (copying many small files is mostly round trips). The first real error stops all workers. |
-| `CHECKSUM_SUFFIX` / `Archive._write_checksums_sync` / `Archive.write_checksums` / `Archive._read_checksums_sync` / `Archive.read_checksums` | `<zip>.sha256` next to each zip: write / read it (None for zips made before 1.8). Deleting a zip (`delete`) deletes its `.sha256` too. |
-| `Archive._verify_sync` / `Archive.verify` | Unzip a zip in the archive (streamed through a resumable reader, nothing written) and compare every file's SHA-256 ([packager.verify_zip](../packager.md)). |
+| `Archive._verify_sync` / `Archive.verify` | Unzip a zip in the archive (streamed through a resumable reader, nothing written) and compare every file's SHA-256, or with `None` just check the zip's own AES/CRC ([packager.verify_zip](../packager.md)). |
 | `Archive._list_zips_sync` / `Archive.list_zips` / `Archive.list_date_folders` | Zips in a date folder / the date folders (for `backuper verify`). |
 | `Archive._ping_sync` / `Archive.ping` | Is the archive reachable right now? (Lists the root; 2-minute limit.) Used to wait for it at the start of a run. |
 | `Archive.discard_copy` | Removes `<name>.partial` when the engine gives up on a copy. |

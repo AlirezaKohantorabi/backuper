@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-CAT_ICON = {"databases": "🗄", "network": "🌐", "websites": "🌍", "files": "📁"}
+CAT_ICON = {"databases": "🗄", "network": "🌐", "websites": "🌍", "files": "📁", "system": "⚙️"}
 PAGE = 30
 BACK_MAIN = [Button.inline("🏠 Main menu", b"m")]
 
@@ -550,7 +550,7 @@ class Panel:
         msg = await self.app.client.send_message(event.chat_id, f"🧪 Testing <b>{esc(src.name)}</b>…",
                                                  parse_mode="html")
         workdir = self.app.cfg.staging_dir / f"test-{sid}"
-        ctx = RunContext(self.store, src, workdir, jalali.now_jalali(self.app.cfg.timezone))
+        ctx = RunContext(self.store, src, workdir, jalali.now_jalali(self.app.cfg.timezone), app=self.app.cfg)
         try:
             cls = get_type(src.type)
             result = await asyncio.wait_for(cls(src, ctx).test(), timeout=180)

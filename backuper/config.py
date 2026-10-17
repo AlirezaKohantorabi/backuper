@@ -30,6 +30,7 @@ class AppConfig:
     staging_dir: Path
     tg_proxy: str
     log_level: str
+    env_file: Path | None = None   # the .env this configuration came from (backed up by the "self" source)
 
     @property
     def db_path(self) -> Path:
@@ -102,6 +103,7 @@ def load_config(env_file: str | os.PathLike | None = None, *, require_telegram: 
         staging_dir=staging_dir,
         tg_proxy=get("TG_PROXY"),
         log_level=get("LOG_LEVEL", "INFO").upper(),
+        env_file=Path(env_file).expanduser().resolve() if env_file else (Path.cwd() / ".env").resolve(),
     )
     for d in (cfg.data_dir, cfg.staging_dir, cfg.log_dir):
         d.mkdir(parents=True, exist_ok=True)

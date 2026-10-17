@@ -100,3 +100,32 @@ def test_failed_sources_are_retried_later(cfg, store):
     assert sched.retry_failed(run_id, 4) is None                              # at most 3 tries
     store.set_setting("retry_failed_after", 0)
     assert sched.retry_failed(run_id, 1) is None                              # 0 = off
+
+
+async def test_one_off_added_from_the_command_line_is_picked_up(cfg, store, monkeypatch, capsys):
+    """`backuper once` writes to the database; the running service schedules (and cancels) it by itself."""
+    from types import SimpleNamespace
+
+    from backuper import cli
+
+    src = store.create_source("Hamrahan-Manual", "mssql_trigger", {}, set())
+    store.save_group("Daily", "0 8 * * *", True)
+    store.create_source("Arpa", "mssql_trigger", {"group": "Daily"}, set())
+    monkeypatch.setattr(cli, "load_config", lambda *a, **k: cfg)
+    monkeypatch.setattr(cli, "open_store", lambda c: store)
+    sched = Scheduler(Engine(cfg, store, None), store, cfg.timezone)
+    sched.start()
+    try:
+        args = SimpleNamespace(env=None, when="+2h", names=["Hamrahan-Manual", "Daily"], list=False, cancel=None)
+        assert cli.cmd_once(args) == 0
+        o = store.list_one_offs()[0]
+        assert len(o.source_ids) == 2 and src in o.source_ids              # a source + a group's members
+        await sched._sync_one_offs()
+        assert any(job_id == f"once:{o.id}" for job_id in (j.id for j in sched._sched.get_jobs()))
+        assert cli.cmd_once(SimpleNamespace(env=None, when=None, names=[], list=False, cancel=o.id)) == 0
+        await sched._sync_one_offs()
+        assert not any(j.id == f"once:{o.id}" for j in sched._sched.get_jobs())
+        bad = SimpleNamespace(env=None, when="22:00", names=["Nope"], list=False, cancel=None)
+        assert cli.cmd_once(bad) == 2 and "No source or group" in capsys.readouterr().err
+    finally:
+        sched.shutdown()

@@ -9,6 +9,23 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.9.0] — 2026-10-17
+
+### Added
+- **The bot backs itself up:** source type *This Backuper server* (`self`) — a consistent copy of its database,
+  its `.env` and `local/` (company configuration), with `RESTORE.txt`. Runs in the Daily group.
+- **`backuper once WHEN NAME…`** (`--list`, `--cancel ID`): one-time runs from the shell, for sources or whole
+  groups; the running service picks them up within 30 s (replaces the bot's ⏱ Run once).
+- Manual-only sources `Hamrahan-Manual`, `Cash-Manual`, `Project-Manual`: the bot runs a `COPY_ONLY` backup of the
+  Hamrahan System databases on request, with the SQL login the owner created.
+
+### Changed
+- **No `.sha256` files are kept.** Every zip is still unzipped and compared file by file right after it's made;
+  the hashes now live only in memory for that check (owner's request). `backuper verify` checks archived zips with
+  the zip's own AES authentication / CRC; `verify-backup.ps1` was removed. The 14 files written earlier today
+  were deleted.
+- Hamrahan, Cash and Project take only the vendor's maintenance-plan files (`<db>_backup_*.bak`).
+
 ## [1.8.1] — 2026-10-17
 
 ### Fixed
