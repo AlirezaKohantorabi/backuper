@@ -18,6 +18,7 @@ site's servers (see [../../LESSONS.md](../../LESSONS.md)).
 | [test_mssql.py](test_mssql.md) | database-name inference, grouping, labels (incl. Holoo's real file names) |
 | [test_status.py](test_status.md) | live status file: progress text, running/idle content, written locally and to the archive |
 | [test_smb_guard.py](test_smb_guard.md) | SMB: own connection per client, waiting for credits, no silent short copies |
+| [test_zkteco.py](test_zkteco.md) | ZKTeco source: tool outcomes → statuses, snapshot check, real kit vs. its simulator |
 | [test_cloud.py](test_cloud.md) | cloud copy with the real rclone: upload, MD5 check, catch-up, retention, opt-out |
 | [test_self_backup.py](test_self_backup.md) | the bot's own backup: database snapshot, .env, local/ |
 | [test_control.py](test_control.md) | restart requests: now, when idle, back-online notice |

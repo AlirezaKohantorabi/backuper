@@ -17,7 +17,8 @@ company = clone, install, add servers from a YAML file.
 
 **Backed up today:** SQL Server databases (by collecting the backups a server already makes, or by making
 them itself), MikroTik routers (full config export with secrets + binary backup), Windows folders (zip or
-plain copy), folders over SFTP/FTP/FTPS, cPanel and DirectAdmin hosting accounts.
+plain copy), folders over SFTP/FTP/FTPS, cPanel and DirectAdmin hosting accounts, ZKTeco attendance devices
+(users, punches and face templates — via the owner's read-only kit), and the bot's own configuration.
 
 **Design goals** (from the first requirements): everything automatic and controllable from Telegram;
 nothing sensitive in clear text in Telegram; big files must not block small ones (smallest first); backups

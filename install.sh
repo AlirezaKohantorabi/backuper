@@ -45,6 +45,11 @@ if [[ ! -x .venv/bin/rclone ]] || ! .venv/bin/rclone version 2>/dev/null | grep 
   rm -rf "$TMP"
 fi
 
+# 2c. ZKTeco attendance devices: the kit in vendor/zk-backup runs in its own venv with pyzk pinned to 0.9
+#     (its read-only guard wraps a private pyzk method; see vendor/zk-backup/README.md)
+uv venv --quiet --allow-existing --python 3.12 .venv-zk
+uv pip install --quiet --python .venv-zk/bin/python "pyzk==0.9"
+
 # 3. .env with a fresh encryption key
 if [[ ! -f .env ]]; then
   say "Creating .env"

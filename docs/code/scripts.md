@@ -9,10 +9,24 @@ Installer/upgrader, run from the repository folder on the bot server.
 | 1. `uv` | Installs the `uv` package manager into `~/.local/bin` if missing. **Why uv:** works without root and without the `python3-venv`/`pip` system packages (a fresh Ubuntu server had neither), and can even download Python itself. |
 | 2. venv + deps | `.venv` with Python 3.12 and the package (`pip install -e .`). |
 | 2b. rclone | A pinned rclone release (for the [cloud copy](backuper/destinations/cloud.md)) downloaded from rclone.org, checked against its `SHA256SUMS`, installed as `.venv/bin/rclone` (no root needed; the service finds it next to its Python). |
+| 2c. `.venv-zk` | A separate venv with `pyzk==0.9` for the [ZKTeco kit](backuper/sources/zkteco.md) (its read-only guard depends on that exact version). |
 | 3. `.env` | Created from `.env.example` with a fresh `SECRET_KEY` (`chmod 600`) — only if it doesn't exist. |
 | 4. systemd | Writes `/etc/systemd/system/backuper.service` from `deploy/backuper.service` (user and folder filled in), enables it, and starts it if `.env` has a bot token and API id. Needs sudo once. `--no-service` skips this. |
 
 Run it again after `git pull` to upgrade (it keeps `.env` and `data/`).
+
+## `vendor/zk-backup/`
+
+The owner's ZKTeco VF600 kit, kept **unchanged** (its invariants: pyzk 0.9 pinned, no write command in the
+backup's whitelist, `zk_restore.py --write` never automated, `last_run.json` only extended). Its
+[README](../../vendor/zk-backup/README.md) documents everything (protocol, both tools, runbook, findings).
+
+| File | Role here |
+|---|---|
+| `zk_backup.py` | Run by the [zkteco source](backuper/sources/zkteco.md) for each device. |
+| `zk_restore.py` | Restore onto a device — **only by a person**, from an admin machine; never run by the bot. |
+| `install.sh` | The kit's own systemd timer installer — **not used** (the bot schedules the backup; running both would read the device twice). |
+| `tests/run_tests.sh`, `tests/fake_zk.py`, `tests/fake_spare.py` | The kit's 25 scenarios against simulated devices: `PY=.venv-zk/bin/python vendor/zk-backup/tests/run_tests.sh` — must pass after any change to the kit (25/25 on 2026-10-31). |
 
 ## `deploy/backuper.service`
 

@@ -9,6 +9,22 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.11.0] — 2026-10-31
+
+### Added
+- **ZKTeco attendance devices** (source type `zkteco`), first one **Paliz Device** (the VF600 face terminal,
+  192.168.10.113): users, attendance log and face templates, read-only, by the owner's kit vendored unchanged in
+  `vendor/zk-backup/` and run as its integration guide says (separate `.venv-zk` with pyzk 0.9, one folder per
+  device, result from `last_run.json`, lock = skipped). The snapshot is checked against its SHA256SUMS, zipped
+  (AES) with the punch master list, archived and copied to the cloud. Kept 14 days (14 snapshots on the bot
+  server, 14 archive copies). Runs nightly at 03:00.
+- `install.sh` creates `.venv-zk` with `pyzk==0.9`.
+
+### Verified
+- The kit's 25 regression scenarios pass; the real `zk_backup.py` against the kit's simulator through a full bot
+  run; a read-only run from the bot server against the spare VF600 (192.168.10.39): 237 users, 394 punches,
+  235/235 faces in 56 s (temporary copy deleted).
+
 ## [1.10.0] — 2026-10-17
 
 ### Added

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-CAT_ICON = {"databases": "🗄", "network": "🌐", "websites": "🌍", "files": "📁", "system": "⚙️"}
+CAT_ICON = {"databases": "🗄", "network": "🌐", "websites": "🌍", "files": "📁", "devices": "🕘", "system": "⚙️"}
 PAGE = 30
 BACK_MAIN = [Button.inline("🏠 Main menu", b"m")]
 

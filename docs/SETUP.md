@@ -165,3 +165,8 @@ sudo systemctl disable --now backuper && sudo rm /etc/systemd/system/backuper.se
 - **cPanel:** WHM *Transfer or Restore a cPanel Account*, or extract `homedir/` and `mysql/*.sql` by hand.
   **DirectAdmin:** put the file into `~/backups/` → *Create/Restore Backups*.
 - **Plain copies** (Edari/Finance): just copy the files back from `E:\Backuper\<date>\<Name>_<stamp>\`.
+- **ZKTeco device** (e.g. *Paliz Device*): unzip `Paliz-Device_<stamp>.zip` on an admin machine with Python and
+  `pyzk==0.9`, check the snapshot (`sha256sum -c SHA256SUMS` inside `snapshots/<stamp>/`), then follow
+  `vendor/zk-backup/README.md` → *Proven procedure*: dry run, one user with `--write --confirm-serial <serial>
+  --face-layout 1`, a face test at the device, then everyone. The punch history is in `attendance_master.csv`
+  (devices can't take punches back). Never let the bot run `zk_restore.py`.

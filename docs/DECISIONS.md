@@ -178,3 +178,12 @@ recommendation accepted by the owner.
 - The owner said the **Ramezani** database on .251 isn't needed. The vendor's automatic HS backups run at
   **00:00**, so the 08:00 Daily run already picks up that night's backup — no extra schedule needed.
 
+### D30 — ZKTeco devices through the owner's kit, as a black box (2026-10-31, O)
+- **Why:** the kit (`zk_backup.py`) is proven on the real VF600 and its safety rests on a read-only guard tied to
+  pyzk 0.9 and on its own tests; its integration guide says to run it as a subprocess and read `last_run.json`.
+  Vendoring it unchanged and running it in its own venv keeps those guarantees; the bot adds what it does for
+  every source: schedule, encryption, archive, cloud copy, retention, report, retries.
+- **Night schedule (03:00), not the 08:00 group:** punches during a read force retries; 03:00 also avoids the
+  kit's own 02:17 timer if it ever runs on another host. **14 days** (owner) for both the snapshots on the bot
+  server and the archive copies.
+

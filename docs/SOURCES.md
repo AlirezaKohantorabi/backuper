@@ -144,3 +144,20 @@ after* turns it into a "move" (e.g. for servers that drop their own dumps somewh
 The bot's own database (consistent copy taken while it runs), its `.env` and everything in `local/` (the
 company configuration), plus a `RESTORE.txt`. Nothing to set up; add it to a daily group. Keep a copy of the
 **zip password** outside this server — it's needed to open this backup and is stored inside it.
+
+## ZKTeco attendance device (`zkteco`)
+
+Users, the attendance log and face templates of a ZKTeco terminal (proven on the VF600, firmware 6.60, ZFace
+VX7.0), read **read-only** over TCP/UDP 4370 by the kit in `vendor/zk-backup/` (see its README).
+
+- **On the device:** nothing to install. If a **Comm Key** is set, put it in *Comm Key*. The bot server must reach
+  port 4370 (the kit's README recommends allowing only the backup host and the attendance server).
+- **When:** at night — a punch landing during a read makes the tool retry (and after 3 tries, fail).
+- **One source per device**; each gets its own folder `data/zk/source-<id>/` on the bot server.
+- **In the zip:** `snapshots/<stamp>/` (users.csv, attendance.csv, faces.json, info.json, SHA256SUMS),
+  `attendance_master.csv` (every punch ever seen), `last_run.json`, `state.json`. Contains PINs, card numbers and
+  biometric templates — the zip is AES-encrypted.
+- **Warnings are passed on verbatim** (clock drift, punches dropped, users removed, memory almost full…); the
+  kit's README has the runbook for each.
+- **Restore** is a human action with `zk_restore.py` — see [SETUP.md](SETUP.md#restoring).
+

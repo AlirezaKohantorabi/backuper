@@ -115,7 +115,7 @@ class RunContext:
 class SourceType(ABC):
     type_id: ClassVar[str]
     title: ClassVar[str]
-    category: ClassVar[str]           # databases | network | websites | files | system
+    category: ClassVar[str]           # databases | network | websites | files | devices | system
     description: ClassVar[str] = ""
     fields: ClassVar[list[Field]] = []
 

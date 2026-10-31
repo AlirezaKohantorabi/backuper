@@ -194,7 +194,14 @@ icacls (Get-SmbShare -Name 'Edari').Path /grant "${bot}:(OI)(CI)RX"
 - **Daily volume for an off-site copy** (everything except Edari/Finance): ~32 GB of zips (Hamrahan 11.4,
   iCan Upload 8.6, harmony.ir 7.2, the rest ~4.5) → ~1.5 h of upload per night at ~21 GB/h; 14 days ≈ 450 GB.
 
-## Open items at the time of writing (2026-10-17)
+- **ZKTeco VF600 (2026-10-31):** the owner's kit came with its own README, tests and an integration contract —
+  integrating it took one small source type and no protocol code. The production unit (192.168.10.113) did not
+  answer from the bot server that day ("No route to host"); the spare (.39) did, and a read-only run from the
+  bot server took 56 s (237 users, 394 punches, 235 faces, clock +113 s). **Lesson:** a tool that ships with a
+  machine-readable result file and documented exit codes is trivial to integrate safely.
+
+## Open items at the time of writing (2026-10-31)
 
 - Telegram: cancelled (api_id impossible). Cloud copy to Google Drive built (1.10), waiting for the Drive plan and the sign-in.
+- Paliz Device (192.168.10.113) unreachable from the bot server on 2026-10-31 — device off, moved, or firewalled?
 - Domain controller time source: Group Policy + Hyper-V time provider (see §4).

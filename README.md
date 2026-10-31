@@ -17,7 +17,7 @@ backups, see history, re-send files.
 
 | | |
 |---|---|
-| **Sources** | SQL Server (collect .bak from a share, or run `BACKUP DATABASE` itself), MikroTik (`export show-sensitive` + binary backup), Windows folders over SMB, folders over SFTP/FTP/FTPS, cPanel and DirectAdmin full-account backups |
+| **Sources** | SQL Server (collect .bak from a share, or run `BACKUP DATABASE` itself), MikroTik (`export show-sensitive` + binary backup), Windows folders over SMB, folders over SFTP/FTP/FTPS, cPanel and DirectAdmin full-account backups, ZKTeco attendance devices (users, punches, face templates; read-only kit in `vendor/zk-backup`), the bot itself |
 | **Packaging** | One zip per backup item, AES-256 (7-Zip/WinRAR), streamed (no temp copy for SMB), already-compressed files stored; or a **plain dated folder copy** (server-side when on the archive's server) |
 | **Archive** | Network share or local folder, one folder per **Jalali** date, keeps the newest N days |
 | **Scheduling** | Backup **groups** with a start time and optional *upload from* time (uploads smallest → biggest, one at a time), sources at their own time, **one-time runs**, manual runs; overlapping runs never upload simultaneously; archive-only mode without Telegram |

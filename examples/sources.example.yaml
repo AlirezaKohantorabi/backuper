@@ -75,6 +75,14 @@ sources:
     transfer_credential: ftp-example     # cPanel FTP login
     schedule: "0 4 * * 5"                # no group: its own time, Fridays 04:00
 
+  - name: Attendance-Device              # ZKTeco terminal: users, punches, face templates (read-only)
+    type: zkteco
+    host: 10.0.0.50
+    faces: true
+    keep_snapshots: 14
+    archive_keep: 14
+    schedule: "03:00"                    # at night: punches during a read cause retries
+
   - name: Backuper                       # this server itself: database, .env, local/ (to rebuild it)
     type: self
     group: Daily

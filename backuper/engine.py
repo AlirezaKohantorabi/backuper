@@ -693,7 +693,7 @@ class Engine:
             pf.upload_error = short_error(e)
 
     def _caption(self, pf: PackagedFile, now: jdatetime.datetime, part: int, parts: int) -> str:
-        icon = {"databases": "🗄", "network": "🌐", "websites": "🌍", "files": "📁", "system": "⚙️"}.get(pf.category, "📦")
+        icon = {"databases": "🗄", "network": "🌐", "websites": "🌍", "files": "📁", "devices": "🕘", "system": "⚙️"}.get(pf.category, "📦")
         title = f"{icon} <b>{esc(pf.source_name)}</b>" + (f" · {esc(pf.label)}" if pf.label else "")
         size = human_size(pf.size)
         if pf.raw_size and pf.raw_size > pf.size * 1.1:
