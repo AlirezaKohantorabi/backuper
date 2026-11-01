@@ -1,0 +1,11 @@
+# Backup output holds PINs, card numbers and face templates: never commit it.
+zk-backups/
+*.csv
+*.json
+SHA256SUMS
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
