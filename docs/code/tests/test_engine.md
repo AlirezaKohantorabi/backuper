@@ -23,6 +23,7 @@ End-to-end runs with a fake source type and a fake Telegram sender, against a re
 | `test_source_already_running_is_skipped` | A source already running in another run is ⏭ in the second run. |
 | `test_upload_waits_for_upload_from_time` | Without a time no waiting; with one, uploads wait until then. |
 | `test_archive_only_mode_without_telegram` | No Telegram configured → zips go straight to the archive and count as ✅. |
+| `test_warning_reason_comes_before_notes` | A source with a long note and a warning: the saved message starts with the warning, then the note, then retention (the 2026-11-01 Paliz Device status line). |
 | `test_copy_format_makes_a_plain_dated_folder` | "Store as: copy" → plain files (not encrypted), original dates kept, not uploaded, no `.partial` left. |
 | `test_archive_write_is_retried` | A failed write into the archive (like the 2026-10-14 SMB credit errors) is retried; the run ends ✅ with a note. |
 | `test_folder_copy_resumes_after_a_failure` | A folder copy that breaks half-way is retried and only copies the missing files. |

@@ -9,6 +9,20 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.11.1] — 2026-11-01
+
+### Fixed
+- **A warning's reason comes first.** A source's result lists its warnings first and the informational lines
+  (notes, retention) after them. Before, Paliz Device's long summary note came first and the status file (which
+  shows 200 characters per problem) cut off the actual warning — the device clock.
+
+### Verified
+- **First nightly run of Paliz Device** (2026-11-01 03:00, run #47): the production VF600 at 192.168.10.113 now
+  answers. Serial 6650154800185, firmware 6.60: 237 users, 12,729 punches, 234/234 faces read in 59 s; the
+  snapshot matched its SHA256SUMS; the zip (10.1 MB → 3.3 MB) was unzipped and compared in the archive.
+  Result ⚠️ only because the **device clock is 270 s slow** (this server is NTP-synchronised) — to be set on the
+  device; the bot never writes to it.
+
 ## [1.11.0] — 2026-10-31
 
 ### Added

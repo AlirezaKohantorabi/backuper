@@ -85,7 +85,8 @@ warnings, and full tracebacks for unexpected errors.
 | `Engine._upload_all` | Phase 2: this run's Telegram files sorted by size, one after another. |
 | `Engine._upload_one` | Upload one file (in parts if needed) with captions; records errors instead of raising. |
 | `Engine._caption` | Telegram caption: source, item, Jalali time, size (and raw size), part i/n, 🔐, hashtags. |
-| `Engine._finish_source` | Phase 3 for one source: final status, per-source archive retention, plugin retention (`after_success`) for safely stored artifacts; sets `delivered` so collect sources don't resend unchanged files. |
+| `Engine._finish_source` | Phase 3 for one source: final status, per-source archive retention, plugin retention (`after_success`) for safely stored artifacts; sets `delivered` so collect sources don't resend unchanged files. Puts the warnings before the informational lines (stable order otherwise), so the saved message starts with the reason. |
+| `INFO_PREFIXES` / `is_info` | Result lines that only inform — `note:` (a source's summary), `retention:` and `deleted …` — and never make a source ⚠️ on their own. 2026-11-01: a long note came first and the status file cut off the real warning (v1.11.1). |
 | `Engine._prune_source_archive` | "Archive copies to keep": remembers which archive paths each run produced and deletes the oldest beyond N (never one that is also part of a kept copy). |
 | `Engine._keep_unsent` | Moves zips that went nowhere to `staging/unsent`. |
 | `Engine._report` | Builds the run's status and report text (HTML for Telegram, ≤ 4000 chars). |

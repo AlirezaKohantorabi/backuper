@@ -36,6 +36,10 @@ class FakeSource(SourceType):
             await FakeSource.gate.wait()
         if self.cfg.get("fail"):
             raise SourceError("server unreachable")
+        if self.cfg.get("note"):
+            self.ctx.note(self.cfg["note"])
+        if self.cfg.get("warn"):
+            self.ctx.warn(self.cfg["warn"])
         arts = []
         for i, size in enumerate(self.cfg["sizes"]):
             data = os.urandom(size)  # incompressible => zip size ~ input size
@@ -377,6 +381,18 @@ async def test_archive_only_mode_without_telegram(cfg, store, tmp_path):
     item = store.run_items(run_id)[0]
     assert item["status"] == OK and len(list((tmp_path / "arch").rglob("DB_*.zip"))) == 1
     assert not list(cfg.staging_dir.rglob("DB_*.zip"))  # streamed straight into the archive
+
+
+async def test_warning_reason_comes_before_notes(cfg, store, tmp_path):
+    """2026-11-01: the status file showed Paliz Device's long summary note and cut off the clock warning."""
+    store.set_setting("archive_path", str(tmp_path / "arch"))
+    store.create_source("Dev", "fake", {"sizes": [100], "note": "237 users " + "x" * 300,
+                                        "warn": "device clock is -270s off"}, set())
+    run_id = await Engine(cfg, store, None).run(trigger="t")
+    item = store.run_items(run_id)[0]
+    assert item["status"] == "warning"
+    assert item["message"].startswith("device clock is -270s off; note: 237 users")
+    assert item["message"].endswith("retention: deleted 1 old file(s), keeping 7")
 
 
 async def test_copy_format_makes_a_plain_dated_folder(cfg, store, tmp_path):

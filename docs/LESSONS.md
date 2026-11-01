@@ -71,6 +71,7 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 | 23 | Deleting an already-missing archive file would have crashed | `except (FileNotFoundError, SMBError)` where `SMBError` is itself a tuple — Python only rejects that *when an exception happens* | writing `backuper verify` (first real error path) | `except SMBError`. **Lesson:** error paths need tests too; an `except` clause is only evaluated when something goes wrong. |
 | 24 | A damaged AES zip wasn't recognised as an integrity failure | pyzipper raises its own `BadZipFile` class, not the standard library's | the new flipped-bit test | Catch both. **Lesson:** test the failure you are guarding against, not only the success. |
 | 25 | A service restart killed a shell run's router backups | startup clean-up deleted every `staging/run-*` folder, including one a `backuper run` in another process was using (started 2 s earlier — by me) | the catch-up run's errors | Runs hold an `flock` on their folder; clean-up skips locked ones (v1.8). **Lesson:** "clean up after a crash" must check the thing is really dead; locks die with their process, timestamps don't. |
+| 26 | The status file showed Paliz Device's summary but cut off its warning | the engine stored a source's notes before its warnings, and the status file shows 200 characters per problem | reading the status after the first nightly run | Warnings first, notes and retention after (v1.11.1). **Lesson:** in anything that can be shortened, put the reason first and the detail after. |
 
 ## 4. What we discovered about the environment (and how it changed the plan)
 
@@ -199,9 +200,12 @@ icacls (Get-SmbShare -Name 'Edari').Path /grant "${bot}:(OI)(CI)RX"
   answer from the bot server that day ("No route to host"); the spare (.39) did, and a read-only run from the
   bot server took 56 s (237 users, 394 punches, 235 faces, clock +113 s). **Lesson:** a tool that ships with a
   machine-readable result file and documented exit codes is trivial to integrate safely.
+- **Paliz Device, first nightly run (2026-11-01 03:00):** .113 answered (serial 6650154800185, firmware 6.60):
+  237 users, 12,729 punches, 234 faces in 59 s, zip 3.3 MB. Its **clock is 270 s slow** — punches are stamped
+  with the device's time, so attendance times are 4½ minutes early until it is set on the device.
 
-## Open items at the time of writing (2026-10-31)
+## Open items at the time of writing (2026-11-01)
 
 - Telegram: cancelled (api_id impossible). Cloud copy to Google Drive built (1.10), waiting for the Drive plan and the sign-in.
-- Paliz Device (192.168.10.113) unreachable from the bot server on 2026-10-31 — device off, moved, or firewalled?
+- Paliz Device clock 270 s slow (2026-11-01) — set it on the device (menu or ZKTeco software); the bot only reads.
 - Domain controller time source: Group Policy + Hyper-V time provider (see §4).

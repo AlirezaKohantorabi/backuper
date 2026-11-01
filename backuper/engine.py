@@ -150,6 +150,14 @@ def _run_dir_in_use(run_dir: Path) -> bool:
     return False
 
 
+INFO_PREFIXES = ("retention:", "deleted ", "note:")
+
+
+def is_info(line: str) -> bool:
+    """A result line that only informs (a note, a retention clean-up) — not a reason for ⚠️."""
+    return line.startswith(INFO_PREFIXES)
+
+
 class Engine:
     def __init__(self, cfg: AppConfig, store: Store, sender: TelegramSender | None):
         self.cfg = cfg
@@ -738,7 +746,8 @@ class Engine:
                     res.warnings.append(f"retention failed: {short_error(e)}")
                 finally:
                     await asyncio.to_thread(pend.plugin.ctx.close)
-        if res.status == OK and any(not w.startswith(("retention:", "deleted ", "note:")) for w in res.warnings):
+        res.warnings.sort(key=is_info)   # the reasons first, so short views (status file) show them
+        if res.status == OK and any(not is_info(w) for w in res.warnings):
             res.status = WARNING
 
     async def _prune_source_archive(self, pend: _Pending, res: ItemResult) -> None:
