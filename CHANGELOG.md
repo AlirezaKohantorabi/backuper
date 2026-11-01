@@ -9,6 +9,15 @@ the way (mistakes included) is in [docs/LESSONS.md](docs/LESSONS.md).
 
 ---
 
+## [1.11.2] — 2026-11-01
+
+### Changed
+- **The ZKTeco kit has its own repository**, [zk-backup](https://github.com/AlirezaKohantorabi/zk-backup) (private, version 2.1), because it is
+  useful without Backuper. `vendor/zk-backup/` is now a **git subtree** of it: the same files, still installed
+  with one clone of Backuper; a new kit version comes in with one `git subtree pull` (see
+  [docs/code/scripts.md](docs/code/scripts.md#vendorzk-backup)). The kit's files are unchanged; the repo adds its
+  own `CHANGELOG.md` and a `.gitignore` that keeps backup output (PINs, cards, faces) out of git.
+
 ## [1.11.1] — 2026-11-01
 
 ### Fixed

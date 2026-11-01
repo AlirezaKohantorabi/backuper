@@ -41,6 +41,9 @@ future projects. Decisions themselves are in [DECISIONS.md](DECISIONS.md).
 | 2026-10-13 | v1.2–1.4: groups and upload queue, compression, archive-only mode, router/website/SQL sources verified end to end, plain copies, one-time runs, documentation. |
 | 2026-10-13 | v1.5–1.6: troubleshooting logs, live status file and progress. |
 | 2026-10-14 | First real scheduled runs: 11 of 17 failed (SMB credits). v1.7: one connection per transfer, retries/resume, restart from the bot. |
+| 2026-10-17 | v1.8–1.10: zips verified by unzipping, wait for the archive after a power cut, failed sources retried; the bot backs itself up; Telegram cancelled → cloud copy to Google Drive (off until storage is bought). |
+| 2026-10-31 | v1.11: ZKTeco attendance devices through the owner's kit; "Paliz Device" nightly at 03:00. |
+| 2026-11-01 | First nightly Paliz Device run OK; v1.11.1 (warnings before notes); v1.11.2: the kit gets its own repo (zk-backup), vendored as a git subtree. |
 
 ## 3. Mistakes we made and how we caught them
 

@@ -225,6 +225,7 @@ docs/                PROJECT (this), SETUP, SOURCES, DECISIONS, LESSONS, code/ (
 deploy/              systemd unit template
 examples/            generic YAML configuration
 install.sh           installer/upgrader
+vendor/zk-backup/    the ZKTeco kit — a git subtree of its own repo, zk-backup (code/scripts.md)
 CHANGELOG.md         versions
 local/ data/ .env    company-specific — git-ignored, never committed
 ```

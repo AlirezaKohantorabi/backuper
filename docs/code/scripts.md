@@ -19,13 +19,26 @@ Run it again after `git pull` to upgrade (it keeps `.env` and `data/`).
 
 The owner's ZKTeco VF600 kit, kept **unchanged** (its invariants: pyzk 0.9 pinned, no write command in the
 backup's whitelist, `zk_restore.py --write` never automated, `last_run.json` only extended). Its
-[README](../../vendor/zk-backup/README.md) documents everything (protocol, both tools, runbook, findings).
+[README](../../vendor/zk-backup/README.md) documents everything (protocol, both tools, runbook, findings); its
+[CHANGELOG](../../vendor/zk-backup/CHANGELOG.md) lists the versions.
+
+**Its own repository** is [zk-backup](https://github.com/AlirezaKohantorabi/zk-backup) (private); this folder is a **git subtree** of it (decision
+D31). Never edit the files here — change the kit there, run its tests, tag it, then bring it in:
+
+```bash
+git subtree pull --prefix=vendor/zk-backup https://github.com/AlirezaKohantorabi/zk-backup.git main --squash -m "ZKTeco kit X.Y"
+```
+
+then run the kit's tests here (below) and Backuper's `tests/test_zkteco.py`, and note the kit version in
+CHANGELOG.md. `git log -1 --grep=git-subtree-dir:.vendor/zk-backup` shows which kit commit is inside.
+Version inside since Backuper 1.11.2: **2.1**.
 
 | File | Role here |
 |---|---|
 | `zk_backup.py` | Run by the [zkteco source](backuper/sources/zkteco.md) for each device. |
 | `zk_restore.py` | Restore onto a device — **only by a person**, from an admin machine; never run by the bot. |
 | `install.sh` | The kit's own systemd timer installer — **not used** (the bot schedules the backup; running both would read the device twice). |
+| `CHANGELOG.md`, `.gitignore` | The kit's versions; keeps backup output (CSV/JSON, SHA256SUMS) out of git. |
 | `tests/run_tests.sh`, `tests/fake_zk.py`, `tests/fake_spare.py` | The kit's 25 scenarios against simulated devices: `PY=.venv-zk/bin/python vendor/zk-backup/tests/run_tests.sh` — must pass after any change to the kit (25/25 on 2026-10-31). |
 
 ## `deploy/backuper.service`

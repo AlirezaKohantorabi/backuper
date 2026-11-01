@@ -187,3 +187,15 @@ recommendation accepted by the owner.
   kit's own 02:17 timer if it ever runs on another host. **14 days** (owner) for both the snapshots on the bot
   server and the archive copies.
 
+### D31 — The ZKTeco kit in its own repo, vendored by git subtree (2026-11-01, E)
+- **Why its own repo:** the owner sees the kit as useful on its own (another site, a one-off run before a
+  firmware update); it has its own version, README, tests and installer, and Backuper only runs it as a program.
+  [zk-backup](https://github.com/AlirezaKohantorabi/zk-backup), private like this one.
+- **Alternatives:** keep a plain copy (no record of which kit version is inside, updates by hand); a **git
+  submodule** (a second clone and GitHub access on the server, and a fresh install breaks if `--recursive` is
+  forgotten).
+- **Chosen: git subtree** (`--squash`): the files stay in this repo, so installing still needs one clone, and
+  each kit update is one commit that records the kit commit it came from (`git-subtree-split`).
+- **Cost:** a kit change is made in zk-backup first, then pulled here; `vendor/zk-backup/` is never edited in
+  place.
+
